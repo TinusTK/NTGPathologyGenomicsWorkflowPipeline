@@ -146,8 +146,15 @@ function layeredPositions(wf) {
     ids.forEach((id, i) => { pos[id] = { x: +l * COL_W, y: (i - (ids.length - 1) / 2) * ROW_H + (tallest * ROW_H) / 2 }; });
   return pos;
 }
+// Saved positions (workflow `layout`, from dragging boxes while editing) win;
+// steps without one, e.g. newly added, get the layered position.
+function graphPositions(wf) {
+  const pos = layeredPositions(wf), saved = wf.layout || {};
+  for (const id of Object.keys(pos)) if (saved[id]) pos[id] = { x: saved[id].x, y: saved[id].y };
+  return pos;
+}
 function graphHeight(wf) {
-  const pos = Object.values(layeredPositions(wf));
+  const pos = Object.values(graphPositions(wf));
   const ys = pos.map((p) => p.y);
   return Math.max(260, Math.max(...ys) - Math.min(...ys) + 100);
 }
@@ -174,7 +181,7 @@ function drawGraph(container, wf, opts = {}) {
   const css = getComputedStyle(document.documentElement);
   const v = (n) => css.getPropertyValue(n).trim();
   const cy = cytoscape({
-    container, elements: els, boxSelectionEnabled: false, minZoom: 0.3, maxZoom: 2,
+    container, elements: els, boxSelectionEnabled: false, minZoom: 0.3, maxZoom: 2, autoungrabify: !opts.onMove,
     style: [
       { selector: "node", style: {
         shape: "round-rectangle", width: 190, height: 46, label: "data(label)", "text-wrap": "wrap",
@@ -191,9 +198,14 @@ function drawGraph(container, wf, opts = {}) {
         "target-arrow-shape": "triangle", "curve-style": "bezier", "arrow-scale": 0.9 } },
       { selector: "edge.fallback", style: { "line-style": "dashed" } },
     ],
-    layout: { name: "preset", positions: layeredPositions(wf), padding: 16 },
+    layout: { name: "preset", positions: graphPositions(wf), padding: 16 },
   });
+  // fit again once the page has its final size, so no box is cut off at the edges
+  requestAnimationFrame(() => { cy.resize(); cy.fit(undefined, 16); });
   if (opts.onSelect) cy.on("tap", "node", (e) => opts.onSelect(e.target.id()));
+  // after a drag, hand back every box's position so the whole picture is kept
+  if (opts.onMove) cy.on("dragfree", "node", () => opts.onMove(Object.fromEntries(cy.nodes().map((n) =>
+    [n.id(), { x: Math.round(n.position("x")), y: Math.round(n.position("y")) }]))));
   if (opts.selected) cy.$id(opts.selected).select();
   return cy;
 }
@@ -226,6 +238,8 @@ function renderWorkflows() {
     h("div", { class: "spacer" }),
     S.editing ? [
       h("button", { onclick: addStepDialog }, "+ Add step"),
+      h("button", { title: "Forget where the boxes were moved to and line them up automatically again",
+        onclick: () => { if (S.draft.layout) { delete S.draft.layout; S.dirty = true; } renderWorkflows(); } }, "Reset layout"),
       h("button", { onclick: () => { if (!S.dirty || confirm("Discard your changes?")) { S.editing = false; S.draft = null; S.dirty = false; renderWorkflows(); } } }, "Cancel"),
       !S.wf.builtin ? h("button", { class: "primary", onclick: () => saveDraft(false) }, `Save as v${Math.max(...S.wf.versions) + 1}`) : null,
       h("button", { class: S.wf.builtin ? "primary" : "", onclick: () => saveDraft(true) }, "Save as new workflow…"),
@@ -245,8 +259,10 @@ function renderWorkflows() {
   const graph = h("div", { id: "graph" });
   const panel = h("div", { class: "card step-panel", id: "step-panel" });
   put(main, bar, info, h("div", { class: "grid2" }, h("div", {}, graph,
-    h("div", { class: "small muted", style: "margin-top:6px" }, "Click a step to see its tool, version, container and settings. Dashed boxes are switched off.")), panel));
-  drawGraph(graph, wf, { selected: S.selected, onSelect: (sid) => { S.selected = sid; renderStepPanel(); } });
+    h("div", { class: "small muted", style: "margin-top:6px" }, "Click a step to see its tool, version, container and settings. Dashed boxes are switched off."
+      + (S.editing ? " Drag the boxes to arrange them; the layout is saved with the workflow." : ""))), panel));
+  drawGraph(graph, wf, { selected: S.selected, onSelect: (sid) => { S.selected = sid; renderStepPanel(); },
+    onMove: S.editing ? (pos) => { S.draft.layout = pos; S.dirty = true; } : null });
   renderStepPanel();
 }
 
