@@ -47,6 +47,8 @@ main { flex: 1; min-width: 0; padding: 16px 20px 40px; }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .spacer { flex: 1; }
 .grid2 { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr); gap: 14px; }
+.grid2 > *, .card { min-width: 0; }
+.card { overflow-x: auto; }
 button, .btn { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; }
 button:hover { background: var(--panel-2); }
 button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -102,7 +104,9 @@ table.data th { background: var(--panel-2); position: sticky; top: 0; font-weigh
 @media (max-width: 900px) {
   .layout { flex-direction: column; }
   .sidebar { width: auto; flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); }
-  .grid2 { grid-template-columns: 1fr; }
+  .grid2 { grid-template-columns: minmax(0, 1fr); }
+  .layout { min-width: 0; }
+  main { min-width: 0; overflow-x: hidden; }
   .step-panel { position: static; max-height: none; }
   main { padding: 12px 16px 40px; }
 }

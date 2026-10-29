@@ -464,7 +464,7 @@ process STEP_compress {
 
     gzip -c "\$IN_file" > "out/\$(basename "\$IN_file").gz"
 
-    printf '%s: %s\\n' 'compress' "\$( (gzip --version 2>&1 | head -1) 2>&1 | head -1 )" >> versions.yml
+    printf '%s: %s\\n' 'compress' "\$( (gzip --help 2>&1 | head -1) 2>&1 | head -1 )" >> versions.yml
     echo 'container.STEP_compress: quay.io/biocontainers/python:3.12.12' >> versions.yml
     [ -f .ntg_notes ] && sed 's/^/note.compress./' .ntg_notes >> versions.yml || true
     """

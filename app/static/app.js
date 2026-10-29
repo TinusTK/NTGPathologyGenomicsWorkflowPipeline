@@ -509,34 +509,72 @@ async function browse(start, pick) {
 }
 
 // ------------------------------------------------------------------ Runs page
+const LIVE_MS = 4000;
+const isLive = (status) => ["running", "starting"].includes(status);
+const clock = () => new Date().toLocaleTimeString();
+function since(iso) {
+  if (!iso) return "";
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+// Re-render without losing the reader's place: keep scroll and open <details>.
+function keepPlace(fn) {
+  const y = window.scrollY;
+  const open = [...document.querySelectorAll("#main details")].map((d) => d.open);
+  fn();
+  document.querySelectorAll("#main details").forEach((d, i) => { if (open[i]) d.open = true; });
+  window.scrollTo(0, y);
+}
+
 async function pageRuns(runId) {
+  clearInterval(S.runTimer);
+  if (!runId) return pageRunList();
   const main = $("#main");
-  const list = await api("runs");
-  if (S.page !== "runs") return;
-  if (!runId) {
-    put(main, h("h1", {}, "Runs & results"),
-      h("div", { class: "card" }, list.length ? h("table", { class: "data" },
-        h("thead", {}, h("tr", {}, ["Run", "Workflow", "Samples", "Status", "Started", "Finished"].map((x) => h("th", {}, x)))),
-        h("tbody", {}, list.map((r) => h("tr", {},
-          h("td", {}, h("a", { onclick: () => go("runs", r.id) }, r.name || r.id), h("div", { class: "muted small mono" }, r.id)),
-          h("td", {}, `${r.workflow.name} v${r.workflow.version}`), h("td", {}, r.n_samples),
-          h("td", {}, h("span", { class: `badge status-${r.status}` }, r.status)), h("td", {}, r.started || ""), h("td", {}, r.finished || "")))))
-        : h("div", { class: "muted" }, "No runs yet. Start one on the Run page.")));
-    return;
-  }
+  let wf = null, tablesKey = "", tablesEl = null;
   const render = async () => {
     const r = await api("runs/" + runId);
-    const wf = await api(`workflows/${r.workflow.id}?version=${r.workflow.version}`).catch(() => null);
-    if (S.page !== "runs") return;
+    if (!wf) wf = await api(`workflows/${r.workflow.id}?version=${r.workflow.version}`).catch(() => null);
+    if (S.page !== "runs" || !location.hash.includes(runId)) return;
     const status = {};
     for (const [sid, st] of Object.entries(r.steps || {})) {
       const ts = Object.values(st.tasks || {});
-      status[sid] = ts.some((t) => t.status === "FAILED") ? "failed" : ts.every((t) => ["COMPLETED", "CACHED"].includes(t.status)) && ts.length ? "done" : "running";
+      status[sid] = ts.some((t) => t.status === "FAILED") ? "failed"
+        : ts.length && ts.every((t) => ["COMPLETED", "CACHED"].includes(t.status)) ? "done"
+        : ts.some((t) => t.status === "RUNNING") ? "running" : "waiting";
     }
-    const graph = h("div", { id: "graph", style: "height:460px" });
+    const off = new Set(r.steps_off || []);
+    const willRun = wf ? runnable(wf, off) : {};
+    const order = wf ? topo(wf) : Object.keys(r.steps || {});
+    const graph = h("div", { id: "graph" });
     const files = r.files || [];
-    const summary = files.filter((f) => f.startsWith("summary/"));
-    put(main, 
+    const summary = files.filter((f) => f.startsWith("summary/") && /\.tsv$/.test(f));
+    const key = summary.join("|");
+    if (key !== tablesKey) { // only fetch the summary tables when the set of files changes
+      tablesKey = key;
+      tablesEl = h("div", {});
+      for (const f of summary) {
+        const txt = await fetch(`/api/runs/${runId}/file?path=${encodeURIComponent(f)}`).then((x) => x.text());
+        tablesEl.append(h("h3", {}, f.replace(/^summary\//, "")), tsvTable(txt));
+      }
+    }
+    const stepRow = (sid) => {
+      const st = (r.steps || {})[sid] || { tasks: {} };
+      const ts = Object.entries(st.tasks || {});
+      const done = ts.filter(([, t]) => ["COMPLETED", "CACHED"].includes(t.status)).length;
+      const label = wf && wf.steps[sid] ? wf.steps[sid].label || sid : sid;
+      const skipped = wf && !willRun[sid];
+      const badge = skipped ? h("span", { class: "badge gray" }, off.has(sid) ? "off" : "skipped")
+        : h("span", { class: `badge status-${{ done: "succeeded", failed: "failed", running: "running" }[status[sid]] || "stopped"}` },
+          status[sid] || (isLive(r.status) ? "waiting" : "not run"));
+      return h("tr", {}, h("td", { class: skipped ? "skipped" : "" }, label),
+        h("td", {}, ts.length ? `${done}/${ts.length}` : ""), h("td", {}, badge),
+        h("td", { class: "small muted" }, ts.filter(([, t]) => t.status === "RUNNING").map(([tag, t]) => `${tag === "all" ? "all samples" : tag}: running ${since(t.started_at)}`).join("; ")));
+    };
+    keepPlace(() => put(main,
+      h("div", { class: "row" }, h("a", { onclick: () => go("runs") }, "← All runs"), h("div", { class: "spacer" }),
+        isLive(r.status) ? h("span", { class: "small muted" }, `● Live, updated ${clock()}`) : null,
+        isLive(r.status) ? h("button", { class: "danger", onclick: async () => { if (confirm("Stop this run?")) { await api(`runs/${runId}/stop`, { method: "POST" }); render(); } } }, "Stop run")
+          : h("button", { class: "danger", onclick: async () => { if (confirm("Delete this run and all its results? This cannot be undone.")) { await api("runs/" + runId, { method: "DELETE" }); go("runs"); } } }, "Delete run")),
       h("div", { class: "row" }, h("a", { onclick: () => go("runs") }, "← All runs"), h("div", { class: "spacer" }),
         ["running", "starting"].includes(r.status) ? h("button", { class: "danger", onclick: async () => { if (confirm("Stop this run?")) { await api(`runs/${runId}/stop`, { method: "POST" }); render(); } } }, "Stop run")
           : h("button", { class: "danger", onclick: async () => { if (confirm("Delete this run and all its results? This cannot be undone.")) { await api("runs/" + runId, { method: "DELETE" }); go("runs"); } } }, "Delete run")),
@@ -552,13 +590,8 @@ async function pageRuns(runId) {
       h("div", { class: "grid2" },
         h("div", {}, graph),
         h("div", { class: "card" }, h("h2", { style: "margin-top:0" }, "Progress"),
-          h("table", { class: "data" }, h("tbody", {}, Object.entries(r.steps || {}).map(([sid, st]) => {
-            const ts = Object.entries(st.tasks || {});
-            const done = ts.filter(([, t]) => ["COMPLETED", "CACHED"].includes(t.status)).length;
-            return h("tr", {}, h("td", {}, wf && wf.steps[sid] ? wf.steps[sid].label || sid : sid),
-              h("td", {}, `${done}/${ts.length}`), h("td", {}, h("span", { class: `badge status-${status[sid] === "done" ? "succeeded" : status[sid] === "failed" ? "failed" : "running"}` }, status[sid])));
-          }))))),
-      summary.length ? h("div", { class: "card" }, h("h2", { style: "margin-top:0" }, "Summary tables"), h("div", { id: "tables" })) : null,
+          h("table", { class: "data" }, h("tbody", {}, order.map(stepRow))))),
+      summary.length ? h("div", { class: "card" }, h("h2", { style: "margin-top:0" }, "Summary tables"), tablesEl) : null,
       h("div", { class: "card" }, h("h2", { style: "margin-top:0" }, `All result files (${files.length})`),
         h("div", { class: "table-wrap", style: "max-height:300px" }, h("table", { class: "data" }, h("tbody", {}, files.map((f) => h("tr", {},
           h("td", { class: "mono small" }, f),
@@ -570,20 +603,33 @@ async function pageRuns(runId) {
         r.provenance.notes && Object.keys(r.provenance.notes).length ? [h("h3", {}, "Automatic decisions"), kvTable(r.provenance.notes)] : null,
         h("h3", {}, "Containers"), kvTable(Object.fromEntries(Object.entries(r.provenance.containers || {}).map(([k, v]) => [k, `${v.image}${v.digest ? "  (" + v.digest.split("@")[1] + ")" : ""}`]))),
         h("details", {}, h("summary", {}, "Full provenance.json"), h("pre", {}, JSON.stringify(r.provenance, null, 2)))) : null,
-      h("div", { class: "card" }, h("h2", { style: "margin-top:0" }, "Nextflow log (last lines)"), h("pre", {}, (r.log_tail || []).join("\n"))));
-    if (wf) drawGraph(graph, wf, { status, off: new Set(r.steps_off || []) });
-    if (summary.length) {
-      const tables = $("#tables");
-      for (const f of summary.filter((f) => /\.tsv$/.test(f))) {
-        const txt = await fetch(`/api/runs/${runId}/file?path=${encodeURIComponent(f)}`).then((x) => x.text());
-        tables.append(h("h3", {}, f.replace(/^summary\//, "")), tsvTable(txt));
-      }
-    }
-    if (!["running", "starting"].includes(r.status)) clearInterval(S.runTimer);
+      h("div", { class: "card" }, h("h2", { style: "margin-top:0" }, "Nextflow log (last lines)"), h("pre", {}, (r.log_tail || []).join("\n")))));
+    if (wf) drawGraph(graph, wf, { status, off });
+    return r.status;
   };
-  await render();
-  clearInterval(S.runTimer);
-  S.runTimer = setInterval(() => { if (S.page === "runs" && !document.hidden) render().catch(() => {}); }, 5000);
+  // Poll while the run is going; one last render after it ends, then stop.
+  const loop = async () => {
+    let st;
+    try { st = await render(); } catch { st = "running"; }
+    if (S.page === "runs" && location.hash.includes(runId) && isLive(st)) S.runTimer = setTimeout(loop, LIVE_MS);
+  };
+  await loop();
+}
+
+async function pageRunList() {
+  const list = await api("runs");
+  if (S.page !== "runs" || location.hash.includes("/")) return;
+  keepPlace(() => put($("#main"), h("div", { class: "row" }, h("h1", {}, "Runs & results"), h("div", { class: "spacer" }),
+      list.some((r) => isLive(r.status)) ? h("span", { class: "small muted" }, `● Live, updated ${clock()}`) : null),
+    h("div", { class: "card" }, list.length ? h("table", { class: "data" },
+      h("thead", {}, h("tr", {}, ["Run", "Workflow", "Samples", "Status", "Started", "Finished"].map((x) => h("th", {}, x)))),
+      h("tbody", {}, list.map((r) => h("tr", {},
+        h("td", {}, h("a", { onclick: () => go("runs", r.id) }, r.name || r.id), h("div", { class: "muted small mono" }, r.id)),
+        h("td", {}, `${r.workflow.name} v${r.workflow.version}`), h("td", {}, r.n_samples),
+        h("td", {}, h("span", { class: `badge status-${r.status}` }, r.status), isLive(r.status) ? h("div", { class: "small muted" }, `running ${since(r.started)}`) : null),
+        h("td", {}, r.started || ""), h("td", {}, r.finished || "")))))
+      : h("div", { class: "muted" }, "No runs yet. Start one on the Run page."))));
+  if (list.some((r) => isLive(r.status))) S.runTimer = setTimeout(pageRunList, LIVE_MS);
 }
 function kvTable(obj) {
   return h("table", { class: "data" }, h("tbody", {}, Object.entries(obj || {}).map(([k, v]) => h("tr", {}, h("td", { class: "mono small" }, k), h("td", { class: "small" }, String(v))))));

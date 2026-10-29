@@ -197,9 +197,12 @@ def _task_event(run_id, process, tag, status, extra=None):
         st = run["steps"].setdefault(step, {"tasks": {}})
         key = tag or "all"
         cur = st["tasks"].get(key, {})
-        order = ["SUBMITTED", "RUNNING", "COMPLETED", "FAILED", "ABORTED", "CACHED"]
-        if cur.get("status") in ("COMPLETED", "FAILED", "CACHED") and status in ("SUBMITTED", "RUNNING"):
+        # events arrive from two sources (weblog, console) in any order: never go backwards
+        rank = {"SUBMITTED": 1, "RUNNING": 2, "COMPLETED": 3, "CACHED": 3, "FAILED": 3, "ABORTED": 3}
+        if rank.get(status, 3) < rank.get(cur.get("status"), 0):
             return
+        if status == "RUNNING" and "started_at" not in cur:
+            cur["started_at"] = dt.datetime.now().isoformat(timespec="seconds")
         cur.update({"status": status, **(extra or {})})
         st["tasks"][key] = cur
         f.write_text(json.dumps(run, indent=2))
