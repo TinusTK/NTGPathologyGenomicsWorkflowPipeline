@@ -45,19 +45,115 @@ workflow "RDH v5.2 + Shigella + C. diphtheriae typing" adds them.
 ## Requirements
 
 - Linux, or Windows 10/11 with WSL2 (Ubuntu)
-- Docker Engine (or Apptainer), Java 17+, Nextflow 25.04+, Python 3.10+ with PyYAML
+- Docker Engine (or Apptainer), Java 17+, Nextflow 25.04+, Python 3.10+ with PyYAML, git
 - About 10 GB of disk for databases, plus room for runs
+- 16 GB RAM or more is best (the UI warns about steps that need more than
+  this computer has)
+
+## Installing
+
+### Windows 10/11 (with WSL2)
+
+The pipeline runs inside Ubuntu on WSL2; the UI opens in your normal Windows
+browser.
+
+1. **Install Ubuntu on WSL2.** In PowerShell as administrator, then restart
+   the computer and open "Ubuntu 24.04" from the Start menu once to set up a
+   user name and password:
+
+   ```powershell
+   wsl --install -d Ubuntu-24.04
+   ```
+
+2. **Install the tools inside Ubuntu.** In the Ubuntu window:
+
+   ```bash
+   sudo apt update
+   sudo apt install -y git python3 python3-yaml openjdk-21-jre-headless docker.io curl
+   sudo usermod -aG docker $USER
+   sudo systemctl enable --now docker
+   curl -s https://get.nextflow.io | bash
+   sudo mv nextflow /usr/local/bin/
+   ```
+
+   This is Docker Engine from Ubuntu (`docker.io`), not Docker Desktop. Close
+   the Ubuntu window and open it again so the `docker` group takes effect.
+
+3. **Get the pipeline.** Still in Ubuntu, clone it into your Windows
+   Documents folder (replace `<WindowsUser>` with your Windows user name):
+
+   ```bash
+   cd "/mnt/c/Users/<WindowsUser>/Documents"
+   git clone https://github.com/TinusTK/NTGPathologyGenomicsWorkflowPipeline.git
+   ```
+
+4. **Make the desktop shortcuts.** In normal Windows PowerShell (not as
+   administrator), from the cloned folder:
+
+   ```powershell
+   cd "$env:USERPROFILE\Documents\NTGPathologyGenomicsWorkflowPipeline"
+   powershell -ExecutionPolicy Bypass -File windows\create-desktop-shortcut.ps1
+   ```
+
+   If your Ubuntu is not called `Ubuntu-24.04` (see `wsl -l`), add
+   `-Distro <name>`. This puts two shortcuts on the desktop:
+
+   | Shortcut | What it does |
+   |---|---|
+   | **NTG Genomics Pipeline** | Starts the UI inside Ubuntu and opens it in your browser (http://localhost:8642). A small minimised window stays open while you use it; closing that window stops the UI. A run that has started keeps going. |
+   | **Stop NTG Genomics Pipeline** | Stops everything: the UI, any running pipeline, Docker and WSL. If a run is still going it asks first, because stopping cancels the run (results so far are kept). Use it when you are finished, to give the memory back to Windows. |
+
+   If you move the pipeline folder, run the script again to update the
+   shortcuts.
+
+5. **Download the databases.** Double-click **NTG Genomics Pipeline**, go to
+   **Databases** and install CheckM (1.4 GB) and Kraken2 Standard-8 (7.5 GB).
+   **This computer** then shows whether everything is ready.
+
+### Linux
+
+1. Install the tools (Ubuntu/Debian shown; use your distribution's packages
+   otherwise):
+
+   ```bash
+   sudo apt update
+   sudo apt install -y git python3 python3-yaml openjdk-21-jre-headless docker.io curl
+   sudo usermod -aG docker $USER      # then log out and back in
+   sudo systemctl enable --now docker
+   curl -s https://get.nextflow.io | bash
+   sudo mv nextflow /usr/local/bin/
+   ```
+
+   On a shared server without Docker, Apptainer works too (`-profile apptainer`).
+
+2. Get the pipeline and download the databases:
+
+   ```bash
+   git clone https://github.com/TinusTK/NTGPathologyGenomicsWorkflowPipeline.git
+   cd NTGPathologyGenomicsWorkflowPipeline
+   ./ntg db install checkm_data
+   ./ntg db install kraken2_standard_8
+   ./ntg hardware                     # checks Docker, Nextflow, Java and memory
+   ```
+
+### Updating
+
+```bash
+cd NTGPathologyGenomicsWorkflowPipeline
+git pull
+```
+
+Your saved workflows, runs and databases are kept in `~/.ntg/` inside
+Ubuntu/Linux, not in the pipeline folder, so updating never touches them.
 
 ## Using it
 
-Start the UI (it opens in your browser):
+Start the UI (it opens in your browser), or on Windows double-click the
+**NTG Genomics Pipeline** desktop shortcut:
 
 ```bash
 ./ntg ui
 ```
-
-On Windows, `windows/create-desktop-shortcut.ps1` puts a shortcut on the
-desktop that does the same.
 
 In the UI:
 
@@ -66,6 +162,8 @@ In the UI:
   description and Galaxy's value. Workflows open **read-only**; **Edit** makes a
   draft, and **Save** always writes a new version (v1, v2, …), so nothing is
   ever overwritten. Built-in workflows can only be saved as a new workflow.
+  While editing, drag the boxes to arrange the graph; the layout is saved
+  with the workflow (**Reset layout** lines them up automatically again).
 - **Run**: pick a workflow and a reads folder, switch steps off for this run
   (anything that needs a switched-off step is skipped too), choose whether to
   keep intermediate files, and see warnings for this computer (memory, disk,
