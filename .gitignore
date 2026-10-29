@@ -1,0 +1,21 @@
+.DS_Store
+# Private: never published
+Local/
+Sessions/
+CLAUDE.md
+*memory.md
+.claude/
+# Local run data (machine paths, sample names)
+.nextflow/
+.nextflow.log*
+work/
+results/
+build/
+__pycache__/
+*.pyc
+# Sequencing reads (patient/lab data, large)
+fastq/
+*.fastq
+*.fastq.gz
+*.fq.gz
+*.fastqsanger.gz

@@ -1,0 +1,124 @@
+id: shigella_typing
+name: Shigella typing
+repo: https://github.com/TinusTK/shigella-typing
+commit: 3e753f02f775e5ad952ab7534c8d0971180f4cd9
+description: >-
+  Shigella serotyping with ShigaPass (assemblies), Mykrobe genotyping and
+  QRDR mutations for S. sonnei / S. flexneri (reads), and a combined report
+  with cross-check warnings.
+container:
+  build:
+    environment_file: environment.yml
+
+tools:
+  - id: shigella_mykrobe
+    name: Mykrobe Shigella genotyping
+    version: 1.0.1
+    category: Typing
+    description: >-
+      Mykrobe genotyping of S. sonnei (Sonneityping) and S. flexneri
+      (Flex-It) from reads, with QRDR mutations. QRDR calls are genotypic
+      markers, not a replacement for susceptibility testing.
+    homepage: https://github.com/TinusTK/shigella-typing
+    license: GPL-3.0
+    citation: "Hunt M et al. (2019) Wellcome Open Res 4:191 (Mykrobe); Hawkey J et al. (2021) Nat Commun 12:2684 (Sonneityping)."
+    scope: per_sample
+    resources: {cpus: 4, memory_gb: 4}
+    requirements: {memory_gb: 2}
+    files: [tool/shigella_typing, panels]
+    inputs:
+      reads: {type: reads, description: Paired reads.}
+    outputs:
+      report: {type: tsv, path: "out/{sample}.mykrobe_report.tsv", description: Genotype, lineage and QRDR calls.}
+    settings:
+      scheme:
+        label: Genotyping scheme
+        type: select
+        options: [auto, sonnei, flexneri]
+        default: auto
+        auto: {value: auto, label: "Auto (run both, keep the one that matches)"}
+        description: Which Mykrobe panel to use.
+    versions:
+      shigella_typing: PYTHONPATH="$TOOL_DIR" python -m shigella_typing.cli --version 2>&1 | awk '{print $NF}'
+      mykrobe: mykrobe --version 2>&1 | tail -1
+    command: |
+      export HOME="$PWD"
+      PYTHONPATH="$TOOL_DIR" python -m shigella_typing.cli mykrobe \
+          --reads "$IN_reads_1" "$IN_reads_2" \
+          --sample "$SAMPLE" \
+          --scheme "$S_scheme" \
+          --threads "$CPUS" \
+          --panels-dir "$TOOL_DIR/panels" \
+          --outdir mykrobe_out
+      cp mykrobe_out/mykrobe_report.tsv "out/$SAMPLE.mykrobe_report.tsv"
+
+  - id: shigapass
+    name: ShigaPass typing
+    version: 1.0.1
+    category: Typing
+    description: >-
+      Shigella serotype and EIEC identification from assemblies with
+      ShigaPass. Non-Shigella samples are reported as such.
+    homepage: https://github.com/TinusTK/shigella-typing
+    license: GPL-3.0
+    citation: "Yassine I et al. (2023) ShigaPass: an in silico tool predicting Shigella serotypes from whole-genome sequencing assemblies. Microb Genom 9:000961."
+    scope: all_samples
+    resources: {cpus: 4, memory_gb: 4}
+    requirements: {memory_gb: 2}
+    files: [tool/shigella_typing, panels]
+    inputs:
+      contigs: {type: fasta, description: Assembled contigs of every sample.}
+    outputs:
+      report: {type: tsv, path: out/shigapass_report.tsv, description: Serotype per sample.}
+    settings: {}
+    versions:
+      shigella_typing: PYTHONPATH="$TOOL_DIR" python -m shigella_typing.cli --version 2>&1 | awk '{print $NF}'
+      shigapass: ShigaPass.sh -v 2>&1 | grep -o '[0-9][0-9.]*' | head -1
+      blast: |-
+        blastn -version 2>&1 | head -1 | sed 's/^blastn: //'
+    command: |
+      export HOME="$PWD"
+      files=(); names=()
+      for f in "$IN_contigs_DIR"/*; do
+          n=$(basename "$f"); n=${n%.contigs.fa}
+          files+=("$f"); names+=("$n")
+      done
+      PYTHONPATH="$TOOL_DIR" python -m shigella_typing.cli shigapass \
+          --assembly "${files[@]}" --name "${names[@]}" \
+          --threads "$CPUS" --outdir shigapass_out
+      cp shigapass_out/shigapass_report.tsv out/shigapass_report.tsv
+
+  - id: shigella_combine
+    name: Shigella combined report
+    version: 1.0.1
+    category: Reports
+    description: >-
+      Joins the ShigaPass and Mykrobe reports per sample, with warnings when
+      the two disagree.
+    homepage: https://github.com/TinusTK/shigella-typing
+    license: GPL-3.0
+    scope: all_samples
+    resources: {cpus: 1, memory_gb: 1}
+    requirements: {memory_gb: 1}
+    files: [tool/shigella_typing]
+    inputs:
+      shigapass: {type: tsv, description: ShigaPass report.}
+      mykrobe: {type: tsv, description: Mykrobe reports of every sample.}
+    outputs:
+      report: {type: tsv, path: out/shigella_typing_report.tsv, description: Combined Shigella report.}
+    settings:
+      strip_suffixes:
+        label: Ignore file-name suffixes
+        type: boolean
+        default: false
+        description: Match samples after removing _assembly, .contigs, .fasta and similar endings.
+    versions:
+      shigella_typing: PYTHONPATH="$TOOL_DIR" python -m shigella_typing.cli --version 2>&1 | awk '{print $NF}'
+    command: |
+      args=()
+      [ "$S_strip_suffixes" = true ] && args+=(--strip-suffixes)
+      PYTHONPATH="$TOOL_DIR" python -m shigella_typing.cli combine \
+          --shigapass "$IN_shigapass_DIR"/* \
+          --mykrobe "$IN_mykrobe_DIR"/* \
+          "${args[@]}" --outdir combine_out
+      cp combine_out/shigella_typing_report.tsv out/shigella_typing_report.tsv

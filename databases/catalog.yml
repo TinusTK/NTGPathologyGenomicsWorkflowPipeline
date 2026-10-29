@@ -1,0 +1,30 @@
+# Reference databases the tools use. Installed under $NTG_DB_DIR
+# (default ~/.ntg/databases) by `ntg db install <id>` or the UI.
+databases:
+  kraken2_standard_8:
+    name: Kraken2 Standard-8 (with Bracken files)
+    version: "2026-06-26"
+    size_gb: 7.5
+    install_dir: kraken2/k2_standard_08_GB_20260626
+    check_file: hash.k2d
+    url: https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08_GB_20260626.tar.gz
+    format: tar.gz
+    source: https://benlangmead.github.io/aws-indexes/k2
+    description: >-
+      RefSeq archaea, bacteria, viruses, plasmids, human and UniVec_Core,
+      capped at 8 GB so it fits in ordinary PCs' memory. Includes the Bracken
+      k-mer files (100-300 bp reads).
+    galaxy_note: >-
+      Galaxy RDH v5.2 used the full Standard database of 2020-02-04 with
+      Bracken files from 2021-05-17. Standard-8 is smaller and newer, so
+      species abundances can differ a little from Galaxy.
+  checkm_data:
+    name: CheckM reference data
+    version: "2015-01-16"
+    size_gb: 1.4
+    install_dir: checkm/checkm_data_2015_01_16
+    check_file: taxon_marker_sets.tsv
+    url: https://data.ace.uq.edu.au/public/CheckM_databases/checkm_data_2015_01_16.tar.gz
+    format: tar.gz
+    source: https://github.com/Ecogenomics/CheckM/wiki/Installation
+    description: Marker gene sets and reference tree for CheckM 1.x (the only release of this data).

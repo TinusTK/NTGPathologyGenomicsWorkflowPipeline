@@ -1,0 +1,147 @@
+id: rdh_v5_2
+name: Genomic Assembly and analysis - RDH version 5.2
+version: 1
+description: >-
+  Isolate typing from paired Illumina reads: read QC, assembly, species ID,
+  MLST, serovar, emm type, AMR, virulence, plasmids and assembly QC. A
+  faithful copy of the Galaxy Australia workflow of the same name (settings
+  from the .ga file in reference/).
+source: reference/Galaxy-Workflow-Genomic_Assembly_and_analysis_-_RDH_version_5.2.ga
+
+input:
+  type: paired_reads
+  pattern: "*_R{1,2}*.gz"
+  description: A folder of paired reads, <sample>_R1...gz and <sample>_R2...gz.
+
+steps:
+  fastp:
+    tool: fastp
+    label: Read preprocessing
+    galaxy_step: 3
+    inputs: {reads: [input]}
+
+  shovill:
+    tool: shovill
+    label: Genome assembly
+    galaxy_step: 4
+    inputs: {reads: [fastp.reads, input]}
+    settings:
+      assembler: spades
+      depth: 150
+      minlen: 0
+      mincov: 2
+      namefmt: contig%05d
+      gsize: ""
+      trim: false
+      nocorr: true
+
+  kraken2:
+    tool: kraken2
+    label: Species identification
+    galaxy_step: 5
+    inputs: {reads: [fastp.reads, input]}
+    settings: {confidence: 0.0, min_base_quality: 0, minimum_hit_groups: 2, quick: false}
+
+  bracken:
+    tool: bracken
+    label: Species abundance
+    galaxy_step: 18
+    inputs: {report: [kraken2.report]}
+    settings: {level: S, threshold: 10, read_len: 150}
+
+  sistr:
+    tool: sistr
+    label: Serovar calling
+    galaxy_step: 6
+    inputs: {contigs: [shovill.contigs]}
+    settings: {qc: true, run_mash: true, no_cgmlst: false, use_full_cgmlst_db: false}
+
+  mlst:
+    tool: mlst
+    label: Multilocus sequence typing
+    galaxy_step: 7
+    inputs: {contigs: [shovill.contigs]}
+
+  staramr:
+    tool: staramr
+    label: AMR and plasmids (staramr)
+    galaxy_step: 8
+    inputs: {contigs: [shovill.contigs]}
+    settings:
+      pid_threshold: 98.0
+      plength_resfinder: 60.0
+      plength_pointfinder: 95.0
+      plength_plasmidfinder: 60.0
+      pointfinder_organism: ""
+      mlst_scheme: auto
+      genome_size_lower_bound: 4000000
+      genome_size_upper_bound: 6000000
+      minimum_n50_value: 10000
+      minimum_contig_length: 300
+      unacceptable_number_contigs: 1000
+      report_all_blast: false
+      exclude_negatives: false
+
+  emmtyper:
+    tool: emmtyper
+    label: emm typing
+    galaxy_step: 9
+    inputs: {contigs: [shovill.contigs]}
+
+  abricate_bac:
+    tool: abricate
+    label: ABRicate BAC (NCBI resistance genes)
+    galaxy_step: 11
+    inputs: {contigs: [shovill.contigs]}
+    settings: {db: ncbi, minid: 80.0, mincov: 80.0, noheader: false}
+
+  abricate_cdip:
+    tool: abricate
+    label: ABRicate CDIP (VFDB virulence genes)
+    galaxy_step: 12
+    inputs: {contigs: [shovill.contigs]}
+    settings: {db: vfdb, minid: 80.0, mincov: 80.0, noheader: true}
+
+  compress:
+    tool: compress
+    label: Compressed assemblies
+    galaxy_step: 13
+    inputs: {file: [shovill.contigs]}
+
+  checkm:
+    tool: checkm
+    label: Contamination and completeness screen
+    galaxy_step: 14
+    inputs: {contigs: [shovill.contigs]}
+    settings: {tree: auto, unique: 10, multi: 10}
+    galaxy_values: {tree: full}
+    galaxy_note: Galaxy used the full tree. "auto" uses the reduced tree on computers with less than 40 GB RAM.
+
+  quast:
+    tool: quast
+    label: Assembly assessment
+    galaxy_step: 16
+    inputs: {contigs: [shovill.contigs]}
+    settings: {min_contig: 500, contig_thresholds: "0,1000"}
+
+  abritamr:
+    tool: abritamr
+    label: AMR (abriTAMR)
+    galaxy_step: 17
+    inputs: {contigs: [shovill.contigs]}
+
+  summary:
+    tool: summary
+    label: Summary tables
+    galaxy_step: "0, 2, 10, 15, 19-44"
+    publish: summary
+    inputs:
+      mlst: [mlst.report]
+      sistr: [sistr.prediction]
+      abricate_bac: [abricate_bac.report]
+      abricate_cdip: [abricate_cdip.report]
+      quast: [quast.report]
+      emmtyper: [emmtyper.report]
+      checkm: [checkm.results]
+      shovill_log: [shovill.log]
+      bracken: [bracken.abundance]

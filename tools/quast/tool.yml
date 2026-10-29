@@ -1,0 +1,49 @@
+id: quast
+name: QUAST
+version: 5.3.0
+category: Assembly QC
+description: >-
+  Assembly statistics for every sample in one report: number of contigs,
+  total length, N50, GC% and more.
+homepage: https://github.com/ablab/quast
+license: GPL-2.0
+citation: "Mikheenko A et al. (2018) Versatile genome assembly evaluation with QUAST-LG. Bioinformatics 34:i142-i150."
+container: quay.io/biocontainers/quast:5.3.0--py313pl5321h5ca1c30_2
+scope: all_samples
+resources: {cpus: 4, memory_gb: 4}
+requirements: {memory_gb: 2}
+
+inputs:
+  contigs: {type: fasta, description: Assembled contigs of every sample.}
+
+outputs:
+  report: {type: tsv, path: "out/report.tsv", description: One column per sample.}
+  transposed: {type: tsv, path: "out/transposed_report.tsv", description: One row per sample.}
+  html: {type: html, path: "out/report.html", description: Interactive QUAST report.}
+
+settings:
+  min_contig:
+    label: Minimum contig length
+    type: integer
+    default: 500
+    description: Contigs shorter than this (bp) are left out of the statistics.
+  contig_thresholds:
+    label: Contig length thresholds
+    type: string
+    default: "0,1000,5000,10000,25000,50000"
+    description: Comma-separated lengths for the "# contigs (>= x bp)" rows.
+
+version_command: quast.py --version 2>&1 | grep -o 'QUAST v[0-9.]*' | sed 's/QUAST v//'
+
+command: |
+  files=(); labels=()
+  for f in "$IN_contigs_DIR"/*; do
+      n=$(basename "$f"); n=${n%.contigs.fa}
+      files+=("$f"); labels+=("$n")
+  done
+  quast.py -o quast_out --threads "$CPUS" \
+      --min-contig "$S_min_contig" \
+      --contig-thresholds "$S_contig_thresholds" \
+      -l "$(IFS=,; echo "${labels[*]}")" \
+      "${files[@]}"
+  cp quast_out/report.tsv quast_out/transposed_report.tsv quast_out/report.html out/

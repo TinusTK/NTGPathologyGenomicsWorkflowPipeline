@@ -1,0 +1,39 @@
+id: fastp
+name: fastp
+version: 0.24.0
+category: Read preprocessing
+description: >-
+  Quality control, adapter trimming and filtering of raw Illumina reads.
+  Writes an HTML and a JSON quality report for each sample.
+homepage: https://github.com/OpenGene/fastp
+license: MIT
+citation: "Chen S. (2023) Ultrafast one-pass FASTQ data preprocessing, quality control, and deduplication using fastp. iMeta 2:e107."
+container: quay.io/biocontainers/fastp:0.24.0--heae3180_1
+scope: per_sample
+resources: {cpus: 8, memory_gb: 4}
+requirements: {memory_gb: 2, disk_gb_per_sample: 1}
+
+inputs:
+  reads: {type: reads, description: Paired raw reads (R1 + R2).}
+
+outputs:
+  reads:
+    type: reads
+    path: "trimmed/{sample}_R{1,2}.fastq.gz"
+    description: Trimmed reads, passed on to the next steps (not kept in the results, to save space).
+  html: {type: html, path: "out/{sample}.fastp.html", description: Quality report (open in a browser).}
+  json: {type: json, path: "out/{sample}.fastp.json", description: Quality report as data.}
+
+settings: {}
+
+version_command: fastp --version 2>&1 | sed 's/^fastp //'
+
+command: |
+  mkdir -p trimmed
+  fastp \
+      --thread "$CPUS" \
+      --report_title "$SAMPLE" \
+      -i "$IN_reads_1" -I "$IN_reads_2" \
+      -o "trimmed/${SAMPLE}_R1.fastq.gz" -O "trimmed/${SAMPLE}_R2.fastq.gz" \
+      --html "out/$SAMPLE.fastp.html" \
+      --json "out/$SAMPLE.fastp.json"

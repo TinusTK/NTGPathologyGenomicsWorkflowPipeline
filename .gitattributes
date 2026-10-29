@@ -1,0 +1,5 @@
+# Everything runs under Linux/WSL: keep LF line endings on every checkout,
+# including Windows clones (CRLF breaks bash scripts and tool commands).
+* text=auto eol=lf
+*.ps1 text eol=crlf
+app/static/vendor/** -diff

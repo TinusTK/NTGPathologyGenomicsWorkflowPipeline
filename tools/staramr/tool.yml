@@ -1,0 +1,126 @@
+id: staramr
+name: staramr
+version: 0.11.0
+category: AMR and plasmids
+description: >-
+  Scans all assemblies against ResFinder, PointFinder and PlasmidFinder for
+  antimicrobial resistance genes and plasmid replicons, with MLST and
+  assembly QC, and writes one Excel workbook for the whole run.
+homepage: https://github.com/phac-nml/staramr
+license: Apache-2.0
+citation: "Bharat A et al. (2022) Correlation between phenotypic and in silico detection of antimicrobial resistance in Salmonella enterica in Canada using staramr. Microorganisms 10:292."
+container: quay.io/biocontainers/staramr:0.11.0--pyhdfd78af_0
+scope: all_samples
+resources: {cpus: 8, memory_gb: 4}
+requirements: {memory_gb: 2}
+
+inputs:
+  contigs: {type: fasta, description: Assembled contigs of every sample.}
+
+outputs:
+  excel: {type: xlsx, path: "out/staramr_results.xlsx", description: All staramr results in one workbook.}
+  summary: {type: tsv, path: "out/summary.tsv", description: One line per sample.}
+  detailed_summary: {type: tsv, path: "out/detailed_summary.tsv", description: Every hit per sample.}
+  tables: {type: tsv, path: "out/{resfinder,plasmidfinder,mlst,settings}*", optional: true, description: Per-database tables and settings.}
+
+settings:
+  pid_threshold:
+    label: Percent identity
+    type: number
+    default: 98.0
+    description: Minimum % identity of a BLAST hit to report it.
+  plength_resfinder:
+    label: ResFinder overlap (%)
+    type: number
+    default: 60.0
+    description: Minimum % of the ResFinder gene a hit must cover.
+  plength_pointfinder:
+    label: PointFinder overlap (%)
+    type: number
+    default: 95.0
+    description: Minimum % of the PointFinder gene a hit must cover.
+  plength_plasmidfinder:
+    label: PlasmidFinder overlap (%)
+    type: number
+    default: 60.0
+    description: Minimum % of the plasmid replicon a hit must cover.
+  pointfinder_organism:
+    label: PointFinder organism
+    type: string
+    default: ""
+    auto: {value: "", label: "Off (no point mutations)"}
+    description: Set an organism (e.g. salmonella) to also look for resistance point mutations.
+  mlst_scheme:
+    label: MLST scheme
+    type: string
+    default: auto
+    auto: {value: auto, label: Auto-detect}
+    description: MLST scheme staramr uses for its own ST column.
+  genome_size_lower_bound:
+    label: QC minimum genome size (bp)
+    type: integer
+    default: 4000000
+    description: Genomes smaller than this fail staramr's QC (only a warning; results are still reported).
+  genome_size_upper_bound:
+    label: QC maximum genome size (bp)
+    type: integer
+    default: 6000000
+    description: Genomes larger than this fail staramr's QC.
+  minimum_n50_value:
+    label: QC minimum N50
+    type: integer
+    default: 10000
+    description: Assemblies with a lower N50 fail staramr's QC.
+  minimum_contig_length:
+    label: QC minimum contig length
+    type: integer
+    default: 300
+    description: Contigs shorter than this are not counted in the QC.
+  unacceptable_number_contigs:
+    label: QC maximum contigs
+    type: integer
+    default: 1000
+    description: Assemblies with more contigs than this fail staramr's QC.
+  report_all_blast:
+    label: Report all BLAST hits
+    type: boolean
+    default: false
+    description: Report every hit, not just the best one per gene.
+  exclude_negatives:
+    label: Exclude negative results
+    type: boolean
+    default: false
+    description: Leave out samples with no resistance found.
+
+versions:
+  staramr: staramr --version 2>&1 | grep -v -i warn | tail -1 | sed 's/^staramr //'
+  staramr_resfinder_db: staramr db info 2>/dev/null | awk -F'= ' '/^resfinder_db_commit/{c=$2} /^resfinder_db_date/{d=$2} END{print c" ("d")"}'
+  staramr_plasmidfinder_db: staramr db info 2>/dev/null | awk -F'= ' '/^plasmidfinder_db_commit/{c=$2} /^plasmidfinder_db_date/{d=$2} END{print c" ("d")"}'
+  staramr_pointfinder_db: staramr db info 2>/dev/null | awk -F'= ' '/^pointfinder_db_commit/{c=$2} /^pointfinder_db_date/{d=$2} END{print c" ("d")"}'
+
+command: |
+  mkdir -p genomes
+  for f in "$IN_contigs_DIR"/*; do
+      n=$(basename "$f"); n=${n%.contigs.fa}
+      cp -L "$f" "genomes/$n.fasta"
+  done
+  args=()
+  [ -n "$S_pointfinder_organism" ] && args+=(--pointfinder-organism "$S_pointfinder_organism")
+  [ "$S_mlst_scheme" != auto ] && args+=(--mlst-scheme "$S_mlst_scheme")
+  [ "$S_report_all_blast" = true ] && args+=(--report-all-blast)
+  [ "$S_exclude_negatives" = true ] && args+=(--exclude-negatives)
+  staramr search \
+      -n "$CPUS" \
+      --pid-threshold "$S_pid_threshold" \
+      --percent-length-overlap-resfinder "$S_plength_resfinder" \
+      --percent-length-overlap-pointfinder "$S_plength_pointfinder" \
+      --percent-length-overlap-plasmidfinder "$S_plength_plasmidfinder" \
+      --genome-size-lower-bound "$S_genome_size_lower_bound" \
+      --genome-size-upper-bound "$S_genome_size_upper_bound" \
+      --minimum-N50-value "$S_minimum_n50_value" \
+      --minimum-contig-length "$S_minimum_contig_length" \
+      --unacceptable-number-contigs "$S_unacceptable_number_contigs" \
+      "${args[@]}" \
+      -o staramr_out genomes/*.fasta
+  cp staramr_out/results.xlsx out/staramr_results.xlsx
+  cp staramr_out/*.tsv staramr_out/settings.txt out/

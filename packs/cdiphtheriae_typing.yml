@@ -1,0 +1,72 @@
+id: cdiphtheriae_typing
+name: C. diphtheriae typing
+repo: https://github.com/TinusTK/corynebacterium-diphtheriae-typing
+commit: ac46a03f1b568b2660593cc66b4c12f256415d9e
+description: >-
+  tox gene detection, tox allele and 7-gene MLST for Corynebacterium
+  diphtheriae assemblies, against the bundled BIGSdb-Pasteur database.
+container:
+  build:
+    channels: [conda-forge, bioconda]
+    dependencies: [blast=2.16.0, python=3.12]
+
+tools:
+  - id: cdiphtheriae_typing
+    name: C. diphtheriae typing
+    version: 1.0.0
+    category: Typing
+    description: >-
+      tox detection, tox allele and 7-gene MLST for C. diphtheriae, with the
+      database version recorded on every result. Detection of the tox gene
+      does not prove toxin production: confirm toxigenicity (e.g. Elek test).
+    homepage: https://github.com/TinusTK/corynebacterium-diphtheriae-typing
+    license: MIT
+    citation: "Bolt F et al. (2010) J Clin Microbiol 48:4177-4185 (MLST); BIGSdb-Pasteur."
+    scope: all_samples
+    resources: {cpus: 4, memory_gb: 2}
+    requirements: {memory_gb: 1}
+    files: [tool/diphtheria_typing.py, database]
+    inputs:
+      contigs: {type: fasta, description: Assembled contigs of every sample.}
+    outputs:
+      report: {type: tsv, path: out/cdiphtheriae_typing.tsv, description: "tox gene, tox allele, ST and profile per sample."}
+    settings:
+      tox_min_identity:
+        label: tox minimum identity (%)
+        type: number
+        default: 99
+        description: Identity needed to call a novel tox allele (80-100).
+      tox_min_coverage:
+        label: tox minimum coverage (%)
+        type: number
+        default: 95
+        description: Coverage of the tox allele needed to call it (30-100).
+      mlst_min_identity:
+        label: MLST minimum identity (%)
+        type: number
+        default: 95
+        description: Identity needed for a novel MLST allele call (80-100).
+      mlst_min_coverage:
+        label: MLST minimum coverage (%)
+        type: number
+        default: 95
+        description: Coverage needed for a novel MLST allele call (30-100).
+    versions:
+      cdiphtheriae_typing: python "$TOOL_DIR/diphtheria_typing.py" --version 2>&1 | awk '{print $NF}'
+      cdiphtheriae_db: grep -v '^#' "$TOOL_DIR/database/VERSION.txt" | head -1
+      blast: |-
+        blastn -version 2>&1 | head -1 | sed 's/^blastn: //'
+    command: |
+      args=()
+      for f in "$IN_contigs_DIR"/*; do
+          n=$(basename "$f"); n=${n%.contigs.fa}
+          args+=(--input "$f" --name "$n")
+      done
+      python "$TOOL_DIR/diphtheria_typing.py" "${args[@]}" \
+          --db "$TOOL_DIR/database" \
+          --tox-min-identity "$S_tox_min_identity" \
+          --tox-min-coverage "$S_tox_min_coverage" \
+          --mlst-min-identity "$S_mlst_min_identity" \
+          --mlst-min-coverage "$S_mlst_min_coverage" \
+          --threads "$CPUS" \
+          --output out/cdiphtheriae_typing.tsv

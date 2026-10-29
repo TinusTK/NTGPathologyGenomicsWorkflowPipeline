@@ -1,0 +1,35 @@
+id: mlst
+name: mlst
+version: 2.22.0
+category: Typing
+description: >-
+  Multilocus sequence typing: finds the species' MLST scheme automatically
+  and reports the sequence type (ST) and allele numbers.
+homepage: https://github.com/tseemann/mlst
+license: GPL-2.0
+citation: "Seemann T. mlst. https://github.com/tseemann/mlst (uses PubMLST, Jolley et al. 2018)"
+container: quay.io/biocontainers/mlst:2.22.0--hdfd78af_0
+scope: per_sample
+resources: {cpus: 2, memory_gb: 2}
+requirements: {memory_gb: 1}
+
+inputs:
+  contigs: {type: fasta, description: Assembled contigs.}
+
+outputs:
+  report: {type: tsv, path: "out/{sample}.mlst.tsv", description: "Sample, scheme, ST and alleles."}
+
+settings:
+  scheme:
+    label: Scheme
+    type: string
+    default: ""
+    auto: {value: "", label: Auto-detect}
+    description: Force one MLST scheme (e.g. senterica_achtman_2). Auto picks the best match.
+
+version_command: mlst --version 2>&1 | sed 's/^mlst //'
+
+command: |
+  args=()
+  [ -n "$S_scheme" ] && args+=(--scheme "$S_scheme")
+  mlst --threads "$CPUS" --label "$SAMPLE" "${args[@]}" "$IN_contigs" > "out/$SAMPLE.mlst.tsv"

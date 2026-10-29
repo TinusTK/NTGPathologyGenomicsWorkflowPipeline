@@ -1,0 +1,23 @@
+id: compress
+name: Compress contigs
+version: "1.0"
+category: Utilities
+description: Gzip-compresses each assembly for storage and sharing.
+license: MIT
+container: quay.io/biocontainers/python:3.12.12
+scope: per_sample
+resources: {cpus: 1, memory_gb: 1}
+requirements: {memory_gb: 1}
+
+inputs:
+  file: {type: any, description: File to compress.}
+
+outputs:
+  gz: {type: gz, path: "out/*.gz", description: Compressed file.}
+
+settings: {}
+
+version_command: gzip --version 2>&1 | head -1
+
+command: |
+  gzip -c "$IN_file" > "out/$(basename "$IN_file").gz"

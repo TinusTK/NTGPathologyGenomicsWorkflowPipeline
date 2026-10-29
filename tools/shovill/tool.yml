@@ -1,0 +1,108 @@
+id: shovill
+name: Shovill
+version: 1.4.2
+category: Assembly
+description: >-
+  Assembles each genome from its reads (SPAdes underneath), with read
+  sub-sampling and clean-up to make it faster. Gives the contigs used by
+  every typing step.
+homepage: https://github.com/tseemann/shovill
+license: GPL-3.0
+citation: "Seemann T. Shovill: faster SPAdes assembly of Illumina reads. https://github.com/tseemann/shovill"
+container: quay.io/biocontainers/shovill:1.4.2--hdfd78af_1
+scope: per_sample
+resources: {cpus: 12, memory_gb: 12}
+requirements:
+  memory_gb: 8
+  recommended_memory_gb: 16
+  disk_gb_per_sample: 5
+  note: SPAdes needs more memory for large genomes or very deep data.
+
+inputs:
+  reads: {type: reads, description: Paired reads (trimmed by fastp, or raw if fastp is off).}
+
+outputs:
+  contigs: {type: fasta, path: "out/{sample}.contigs.fa", description: Assembled contigs.}
+  log: {type: log, path: "out/{sample}.shovill.log", description: Shovill log (includes the estimated sequencing depth).}
+
+settings:
+  assembler:
+    label: Assembler
+    type: select
+    options: [spades, skesa, megahit, velvet]
+    default: spades
+    description: Which assembler shovill runs.
+  depth:
+    label: Sub-sample depth
+    type: integer
+    default: 100
+    description: >-
+      Reads are randomly sub-sampled down to this depth before assembly (faster,
+      same result for most genomes). 0 = use all reads.
+  gsize:
+    label: Genome size
+    type: string
+    default: ""
+    auto: {value: "", label: Auto-detect from reads}
+    description: Estimated genome size, e.g. 5.1M. Auto works it out from the reads.
+  minlen:
+    label: Minimum contig length
+    type: integer
+    default: 0
+    description: Contigs shorter than this (bp) are dropped. 0 = shovill's own default.
+  mincov:
+    label: Minimum contig coverage
+    type: number
+    default: 2
+    description: Contigs with lower read coverage than this are dropped.
+  namefmt:
+    label: Contig name format
+    type: string
+    default: contig%05d
+    description: How contigs are named (printf style).
+  trim:
+    label: Trim adaptors (Trimmomatic)
+    type: boolean
+    default: false
+    description: Extra adaptor trimming inside shovill. Off when fastp already trims.
+  nocorr:
+    label: Skip post-assembly correction
+    type: boolean
+    default: false
+    description: Skip the Pilon polishing step after assembly (faster).
+  kmers:
+    label: K-mer sizes
+    type: string
+    default: ""
+    auto: {value: "", label: Automatic}
+    description: Comma-separated SPAdes k-mer sizes. Automatic picks them from read length.
+  opts:
+    label: Extra SPAdes options
+    type: string
+    default: ""
+    description: Passed straight to the assembler (advanced).
+
+versions:
+  shovill: shovill --version 2>&1 | sed 's/^shovill //'
+  spades: spades.py --version 2>&1 | sed 's/^SPAdes genome assembler v//; s/^SPAdes v//'
+
+command: |
+  args=()
+  [ -n "$S_gsize" ] && args+=(--gsize "$S_gsize")
+  [ -n "$S_kmers" ] && args+=(--kmers "$S_kmers")
+  [ -n "$S_opts" ] && args+=(--opts "$S_opts")
+  [ "$S_trim" = true ] && args+=(--trim)
+  [ "$S_nocorr" = true ] && args+=(--nocorr)
+  shovill \
+      --outdir shovill_out \
+      --cpus "$CPUS" \
+      --ram "$MEM_GB" \
+      --R1 "$IN_reads_1" --R2 "$IN_reads_2" \
+      --namefmt "$S_namefmt" \
+      --depth "$S_depth" \
+      --minlen "$S_minlen" \
+      --mincov "$S_mincov" \
+      --assembler "$S_assembler" \
+      "${args[@]}"
+  mv shovill_out/contigs.fa "out/$SAMPLE.contigs.fa"
+  mv shovill_out/shovill.log "out/$SAMPLE.shovill.log"

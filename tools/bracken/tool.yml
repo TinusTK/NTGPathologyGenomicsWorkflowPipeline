@@ -1,0 +1,52 @@
+id: bracken
+name: Bracken
+version: "3.0"
+category: Species identification
+description: >-
+  Re-estimates species abundance from the Kraken2 report, giving the share of
+  reads that belong to each species.
+homepage: https://github.com/jenniferlu717/Bracken
+license: GPL-3.0
+citation: "Lu J, Breitwieser FP, Thielen P, Salzberg SL. (2017) Bracken: estimating species abundance in metagenomics data. PeerJ Comput Sci 3:e104."
+container: quay.io/biocontainers/bracken:3.0--h9948957_2
+scope: per_sample
+resources: {cpus: 1, memory_gb: 2}
+requirements: {memory_gb: 1}
+databases: [kraken2_standard_8]
+
+inputs:
+  report: {type: txt, description: Kraken2 report.}
+
+outputs:
+  abundance: {type: tsv, path: "out/{sample}.bracken.tsv", description: Estimated reads and fraction per species.}
+  report: {type: txt, path: "out/{sample}.bracken.report.txt", description: Kraken-style report after re-estimation.}
+
+settings:
+  level:
+    label: Taxonomic level
+    type: select
+    options: [S, G, F, O, C, P, D]
+    default: S
+    description: "Level to estimate at: S species, G genus, F family, ... D domain."
+  threshold:
+    label: Minimum reads
+    type: integer
+    default: 10
+    description: Taxa with fewer reads than this are not re-estimated.
+  read_len:
+    label: Read length
+    type: integer
+    default: 150
+    description: Read length the database's Bracken k-mer file was built for (100, 150, 200, 250 or 300).
+
+versions:
+  bracken: bracken -v 2>&1 | sed 's/^Bracken v//'
+  bracken_package: echo 3.0
+
+command: |
+  bracken \
+      -d "$DB_kraken2_standard_8" \
+      -i "$IN_report" \
+      -o "out/$SAMPLE.bracken.tsv" \
+      -w "out/$SAMPLE.bracken.report.txt" \
+      -r "$S_read_len" -l "$S_level" -t "$S_threshold"

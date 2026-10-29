@@ -1,0 +1,35 @@
+id: summary
+name: RDH summary tables
+version: "1.0"
+category: Reports
+description: >-
+  Builds the combined tables the Galaxy RDH v5.2 workflow outputs (MLST,
+  SISTR, ABRicate, QUAST, emmtyper, CheckM + depth, Bracken), the same way
+  Galaxy's text steps do. Any table whose tool is switched off is skipped.
+license: MIT
+container: quay.io/biocontainers/python:3.12.12
+scope: all_samples
+resources: {cpus: 1, memory_gb: 1}
+requirements: {memory_gb: 1}
+files: [summarise.py]
+
+inputs:
+  mlst: {type: tsv, optional: true, description: mlst reports.}
+  sistr: {type: tsv, optional: true, description: SISTR predictions.}
+  abricate_bac: {type: tsv, optional: true, description: ABRicate NCBI reports (with header).}
+  abricate_cdip: {type: tsv, optional: true, description: ABRicate VFDB reports (no header).}
+  quast: {type: tsv, optional: true, description: QUAST report.}
+  emmtyper: {type: tsv, optional: true, description: emmtyper reports.}
+  checkm: {type: tsv, optional: true, description: CheckM results.}
+  shovill_log: {type: log, optional: true, description: Shovill logs (sequencing depth).}
+  bracken: {type: tsv, optional: true, description: Bracken abundance tables.}
+
+outputs:
+  tables: {type: tsv, path: "out/*.tsv", optional: true, description: The Galaxy-style output tables.}
+
+settings: {}
+
+version_command: python3 --version 2>&1 | sed 's/^Python //'
+
+command: |
+  python3 "$TOOL_DIR/summarise.py" --in-dir . --out-dir out

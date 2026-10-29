@@ -1,0 +1,52 @@
+id: abritamr
+name: abriTAMR
+version: 1.3.0
+category: AMR and virulence
+description: >-
+  AMR gene detection with NCBI AMRFinderPlus, reported the way Australian
+  public health labs use it (gene classes, partial matches, virulence).
+homepage: https://github.com/MDU-PHL/abritamr
+license: GPL-3.0
+citation: "Sherry NL et al. (2023) An ISO-certified genomics workflow for identification and surveillance of antimicrobial resistance. Nature Communications 14:60."
+container: quay.io/biocontainers/abritamr:1.3.0--pyh5707d69_0
+scope: per_sample
+resources: {cpus: 4, memory_gb: 4}
+requirements: {memory_gb: 2}
+
+inputs:
+  contigs: {type: fasta, description: Assembled contigs.}
+
+outputs:
+  matches: {type: tsv, path: "out/{sample}.abritamr.summary_matches.txt", description: AMR genes found (full matches).}
+  partials: {type: tsv, path: "out/{sample}.abritamr.summary_partials.txt", description: Partial matches.}
+  virulence: {type: tsv, path: "out/{sample}.abritamr.summary_virulence.txt", description: Virulence genes.}
+  amrfinder: {type: tsv, path: "out/{sample}.amrfinder.out", description: Raw AMRFinderPlus output.}
+
+settings:
+  species:
+    label: Species (point mutations)
+    type: string
+    default: ""
+    auto: {value: "", label: "Off (genes only)"}
+    description: Set a species (e.g. Salmonella) to also report resistance point mutations.
+  identity:
+    label: Minimum identity
+    type: string
+    default: ""
+    auto: {value: "", label: AMRFinder default}
+    description: 0 to 1. Blank uses AMRFinderPlus's own curated thresholds (0.9 for most genes).
+
+versions:
+  abritamr: abritamr --version 2>&1 | sed 's/^abritamr //'
+  amrfinderplus: amrfinder --version 2>&1 | tail -1
+  amrfinderplus_db: python -c "import abritamr,os;p=os.path.join(os.path.dirname(abritamr.__file__),'db','amrfinderplus','data');print(sorted(d for d in os.listdir(p) if d[0].isdigit())[-1])"
+
+command: |
+  args=()
+  [ -n "$S_species" ] && args+=(--species "$S_species")
+  [ -n "$S_identity" ] && args+=(--identity "$S_identity")
+  abritamr run -c "$IN_contigs" -px "$SAMPLE" -j "$CPUS" "${args[@]}"
+  for f in summary_matches summary_partials summary_virulence; do
+      cp "$SAMPLE/$f.txt" "out/$SAMPLE.abritamr.$f.txt"
+  done
+  cp "$SAMPLE/amrfinder.out" "out/$SAMPLE.amrfinder.out"

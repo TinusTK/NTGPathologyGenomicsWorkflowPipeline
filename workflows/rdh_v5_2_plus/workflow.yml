@@ -1,0 +1,35 @@
+id: rdh_v5_2_plus
+name: RDH v5.2 + Shigella + C. diphtheriae typing
+version: 1
+extends: rdh_v5_2
+description: >-
+  Everything in "Genomic Assembly and analysis - RDH version 5.2" (unchanged),
+  plus Shigella typing (ShigaPass, Mykrobe, combined report) and
+  C. diphtheriae tox/MLST typing. The extra steps run on every sample; their
+  results only mean something for those species. Needs the shigella_typing
+  and cdiphtheriae_typing tool packs.
+
+steps:
+  shigella_mykrobe:
+    tool: shigella_mykrobe
+    label: Shigella genotyping (Mykrobe)
+    inputs: {reads: [fastp.reads, input]}
+
+  shigapass:
+    tool: shigapass
+    label: Shigella serotyping (ShigaPass)
+    inputs: {contigs: [shovill.contigs]}
+
+  shigella_combine:
+    tool: shigella_combine
+    label: Shigella combined report
+    publish: summary/shigella
+    inputs:
+      shigapass: [shigapass.report]
+      mykrobe: [shigella_mykrobe.report]
+
+  cdiphtheriae_typing:
+    tool: cdiphtheriae_typing
+    label: C. diphtheriae tox and MLST
+    publish: summary/cdiphtheriae
+    inputs: {contigs: [shovill.contigs]}

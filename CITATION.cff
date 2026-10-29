@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use this pipeline, please cite this repository."
+title: "NTGPathologyGenomicsWorkflowPipeline"
+abstract: >-
+  Stand-alone Nextflow version of the Galaxy Australia workflow
+  "Genomic Assembly and analysis - RDH version 5.2" for typing bacterial
+  isolates from paired Illumina reads, with every tool and database version
+  recorded for traceability.
+authors:
+  - alias: "TinusTK"
+version: "0.1.0"
+license: MIT
+type: software

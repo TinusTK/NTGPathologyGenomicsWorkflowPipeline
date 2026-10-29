@@ -1,0 +1,41 @@
+id: emmtyper
+name: emmtyper
+version: 0.2.0
+category: Typing
+description: >-
+  emm typing of Streptococcus pyogenes (Group A Strep) from the assembly,
+  using the CDC emm database. Runs on every sample; results only mean
+  something for S. pyogenes.
+homepage: https://github.com/MDU-PHL/emmtyper
+license: GPL-3.0
+citation: "Tan A et al. emmtyper: emm typing of Streptococcus pyogenes. https://github.com/MDU-PHL/emmtyper"
+container: quay.io/biocontainers/emmtyper:0.2.0--py_0
+scope: per_sample
+resources: {cpus: 1, memory_gb: 2}
+requirements: {memory_gb: 1}
+
+inputs:
+  contigs: {type: fasta, description: Assembled contigs.}
+
+outputs:
+  report: {type: tsv, path: "out/{sample}.emmtyper.tsv", description: Predicted emm type.}
+
+settings:
+  workflow:
+    label: Method
+    type: select
+    options: [blast, pcr]
+    default: blast
+    description: blast searches the whole assembly; pcr mimics the lab PCR primers.
+  cluster_distance:
+    label: Cluster distance
+    type: integer
+    default: 500
+    description: Hits further apart than this (bp) count as separate clusters.
+
+version_command: emmtyper --version 2>&1 | sed 's/^emmtyper v//'
+
+command: |
+  cp -L "$IN_contigs" "$SAMPLE.fasta"
+  emmtyper -w "$S_workflow" --cluster-distance "$S_cluster_distance" -f short \
+      -o "out/$SAMPLE.emmtyper.tsv" "$SAMPLE.fasta"

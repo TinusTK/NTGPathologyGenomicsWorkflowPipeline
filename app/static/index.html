@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NTG Genomics Pipeline</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/vendor/cytoscape.min.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">NTG Pathology Genomics <span class="muted">Workflow Pipeline</span></div>
+  <div id="hw-chip" class="hw-chip" title="This computer"></div>
+</header>
+<div class="layout">
+  <nav class="sidebar" id="nav">
+    <a data-page="workflows" class="active">Workflows</a>
+    <a data-page="run">Run</a>
+    <a data-page="runs">Runs &amp; results</a>
+    <a data-page="tools">Tools</a>
+    <a data-page="databases">Databases</a>
+    <a data-page="system">This computer</a>
+  </nav>
+  <main id="main"></main>
+</div>
+<div id="toast" class="toast hidden"></div>
+<div id="modal" class="modal hidden"><div class="modal-box" id="modal-box"></div></div>
+<script src="/app.js"></script>
+</body>
+</html>

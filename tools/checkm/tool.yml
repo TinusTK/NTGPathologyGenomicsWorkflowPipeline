@@ -1,0 +1,73 @@
+id: checkm
+name: CheckM
+version: 1.2.3
+category: Assembly QC
+description: >-
+  Estimates how complete each genome is and how contaminated it is, from
+  lineage-specific single-copy marker genes (lineage_wf).
+homepage: https://github.com/Ecogenomics/CheckM
+license: GPL-3.0
+citation: "Parks DH et al. (2015) CheckM: assessing the quality of microbial genomes recovered from isolates, single cells, and metagenomes. Genome Research 25:1043-1055."
+container: quay.io/biocontainers/checkm-genome:1.2.3--pyhdfd78af_1
+scope: all_samples
+resources: {cpus: 8, memory_gb: 15}
+requirements:
+  memory_gb: 15
+  full_tree_memory_gb: 40
+  note: >-
+    The full reference tree needs about 40 GB of RAM; the reduced tree about
+    14 GB. With "Tree = Auto" the reduced tree is used when the computer has
+    less than 40 GB. Completeness/contamination can differ slightly between
+    the two.
+databases: [checkm_data]
+
+inputs:
+  contigs: {type: fasta, description: Assembled contigs of every sample.}
+
+outputs:
+  results: {type: tsv, path: "out/checkm_results.tsv", description: "Completeness, contamination and strain heterogeneity per sample."}
+
+settings:
+  tree:
+    label: Reference tree
+    type: select
+    options: [auto, full, reduced]
+    default: auto
+    auto: {value: auto, label: "Auto (full if ≥ 40 GB RAM, else reduced)"}
+    description: >-
+      full = same as Galaxy (needs ~40 GB RAM). reduced = fits in ~14 GB.
+      Auto picks by this computer's memory. The choice used is saved in the
+      run's provenance.
+  unique:
+    label: Minimum unique markers
+    type: integer
+    default: 10
+    description: Unique phylogenetic markers needed to use a lineage-specific marker set.
+  multi:
+    label: Maximum multi-copy markers
+    type: integer
+    default: 10
+    description: Multi-copy markers allowed before falling back to the domain-level set.
+
+version_command: checkm 2>&1 | grep -o 'CheckM v[0-9.]*' | sed 's/CheckM v//'
+
+command: |
+  mkdir -p bins
+  for f in "$IN_contigs_DIR"/*; do
+      n=$(basename "$f"); n=${n%.contigs.fa}
+      cp -L "$f" "bins/$n.fasta"
+  done
+  ram_gb=$(awk '/MemTotal/{print int($2/1048576)}' /proc/meminfo)
+  tree="$S_tree"
+  if [ "$tree" = auto ]; then
+      if [ "$ram_gb" -ge 40 ]; then tree=full; else tree=reduced; fi
+      echo "tree: $tree (auto; computer has $ram_gb GB RAM, full tree needs ~40 GB)" >> .ntg_notes
+  else
+      echo "tree: $tree (set by user)" >> .ntg_notes
+  fi
+  args=()
+  [ "$tree" = reduced ] && args+=(--reduced_tree)
+  export CHECKM_DATA_PATH="$DB_checkm_data"
+  checkm lineage_wf -t "$CPUS" --pplacer_threads 1 -x fasta \
+      -u "$S_unique" -m "$S_multi" "${args[@]}" \
+      --tab_table -f out/checkm_results.tsv bins checkm_out

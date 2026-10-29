@@ -1,0 +1,55 @@
+id: sistr
+name: SISTR
+version: 1.1.1
+category: Typing
+description: >-
+  Salmonella In Silico Typing Resource: predicts Salmonella serovar and
+  serogroup from the assembly (antigens + cgMLST). Runs on every sample;
+  results only mean something for Salmonella.
+homepage: https://github.com/phac-nml/sistr_cmd
+license: Apache-2.0
+citation: "Yoshida CE et al. (2016) The Salmonella In Silico Typing Resource (SISTR). PLoS ONE 11:e0147101."
+container: quay.io/biocontainers/sistr_cmd:1.1.1--pyh7cba7a3_3
+scope: per_sample
+resources: {cpus: 4, memory_gb: 4}
+requirements: {memory_gb: 2}
+
+inputs:
+  contigs: {type: fasta, description: Assembled contigs.}
+
+outputs:
+  prediction: {type: tsv, path: "out/{sample}.sistr.tab", description: Serovar prediction table.}
+
+settings:
+  qc:
+    label: Quality checks
+    type: boolean
+    default: false
+    description: Add QC status and messages to say how confident the prediction is.
+  run_mash:
+    label: Mash distances
+    type: boolean
+    default: false
+    description: Also compare the genome to Salmonella reference genomes with Mash.
+  no_cgmlst:
+    label: Skip cgMLST
+    type: boolean
+    default: false
+    description: Do not run the cgMLST serovar prediction.
+  use_full_cgmlst_db:
+    label: Full cgMLST database
+    type: boolean
+    default: false
+    description: Use the full cgMLST allele set (slower, includes rare alleles).
+
+version_command: sistr --version 2>&1 | sed 's/^sistr_cmd //'
+
+command: |
+  args=()
+  [ "$S_qc" = true ] && args+=(--qc)
+  [ "$S_run_mash" = true ] && args+=(--run-mash)
+  [ "$S_no_cgmlst" = true ] && args+=(--no-cgmlst)
+  [ "$S_use_full_cgmlst_db" = true ] && args+=(--use-full-cgmlst-db)
+  sistr -vv -t "$CPUS" -f tab -o "out/$SAMPLE.sistr" -T "$PWD/sistr_tmp" "${args[@]}" \
+      -i "$IN_contigs" "$SAMPLE"
+  [ -f "out/$SAMPLE.sistr.tab" ] || mv "out/$SAMPLE.sistr" "out/$SAMPLE.sistr.tab"
