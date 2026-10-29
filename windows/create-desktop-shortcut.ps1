@@ -25,3 +25,15 @@ $s.Description = "Open the NTG pathology genomics pipeline UI (keep the small wi
 $s.WindowStyle = 7  # start minimized
 $s.Save()
 Write-Host "Created $lnk"
+
+# "Stop" shortcut: closes the UI, running pipelines, Docker and WSL (asks first if a run is going)
+$stop = Join-Path $desktop "Stop NTG Genomics Pipeline.lnk"
+$t = $shell.CreateShortcut($stop)
+$t.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+$t.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $PSScriptRoot 'stop-pipeline.ps1')`""
+$t.WorkingDirectory = $env:USERPROFILE
+$t.IconLocation = "$env:SystemRoot\System32\imageres.dll,93"
+$t.Description = "Stop the NTG pathology genomics pipeline: UI, running pipelines, Docker and WSL"
+$t.WindowStyle = 7
+$t.Save()
+Write-Host "Created $stop"
