@@ -5,6 +5,8 @@ this computer can reach it.
 """
 import json
 import mimetypes
+import os
+import sys
 import threading
 import traceback
 import uuid
@@ -13,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import catalog, compiler, databases, hardware, runs, toolpacks
+from . import catalog, compiler, databases, hardware, runs, toolpacks, updates
 
 STATIC = Path(__file__).parent / "static"
 JOBS = {}
@@ -140,6 +142,14 @@ class Handler(BaseHTTPRequestHandler):
         g, post, delete = method == "GET", method == "POST", method == "DELETE"
         if g and p == ["hardware"]:
             return self._send(200, hardware.check())
+        if g and p == ["updates"]:
+            return self._send(200, updates.status(fetch=q.get("fetch") != "0"))
+        if post and p == ["updates", "install"]:
+            r = updates.update()
+            self._send(200, r)
+            if r["updated"]:  # load the new code: restart once the answer has gone out
+                threading.Timer(1.0, _restart).start()
+            return
         if g and p == ["tools"]:
             return self._send(200, [_public_tool(t) for t in catalog.load_tools().values()])
         if g and p == ["workflows"]:
@@ -242,6 +252,12 @@ def serve(host="127.0.0.1", port=8642, open_browser=True):
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
+
+
+def _restart():
+    # Same process (so the desktop shortcut's window stays), new code; the browser is already open.
+    args = sys.argv[1:] + ([] if "--no-browser" in sys.argv else ["--no-browser"])
+    os.execv(sys.executable, [sys.executable, "-m", "app.cli", *args])
 
 
 def _open(url):

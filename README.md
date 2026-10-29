@@ -138,6 +138,10 @@ browser.
 
 ### Updating
 
+In the UI, **This computer → Updates** shows whether a newer version is on
+GitHub (the menu shows an "update" badge when there is one). **Update now**
+downloads it and restarts the UI; it waits if a run is going. Or by hand:
+
 ```bash
 cd NTGPathologyGenomicsWorkflowPipeline
 git pull

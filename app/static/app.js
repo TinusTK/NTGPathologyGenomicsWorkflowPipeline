@@ -58,6 +58,14 @@ async function boot() {
   try { S.galaxy = await api("workflows/rdh_v5_2"); } catch { S.galaxy = null; }
   const start = (location.hash || "#workflows").slice(1);
   go(start.split("/")[0] || "workflows", start.split("/")[1]);
+  checkUpdates().catch(() => {}); // quietly, once per start; the badge shows if there's a newer version
+}
+async function checkUpdates(fetch = true) {
+  S.updates = await api("updates" + (fetch ? "" : "?fetch=0"));
+  const link = $('#nav a[data-page="system"]');
+  link.querySelector(".badge")?.remove();
+  if ((S.updates.new || []).length) link.append(" ", h("span", { class: "badge run", title: "A newer version of the pipeline is on GitHub" }, "update"));
+  return S.updates;
 }
 async function loadTools() { S.tools = Object.fromEntries((await api("tools")).map((t) => [t.id, t])); }
 async function loadWorkflows() { S.workflows = await api("workflows"); }
@@ -739,7 +747,52 @@ async function pageSystem() {
       h("div", {}, "Java"), h("div", {}, hw.java || "not found"),
       h("div", {}, "Free disk (runs / work / databases)"), h("div", {}, `${hw.disk_free_gb.runs} / ${hw.disk_free_gb.work} / ${hw.disk_free_gb.databases} GB`))),
     h("div", { class: "card" }, h("h2", { style: "margin-top:0" }, `What this means for "${wf.name}"`),
-      r.warnings.length ? r.warnings.map(warnBox) : h("div", { class: "warn info" }, "This computer can run every step.")));
+      r.warnings.length ? r.warnings.map(warnBox) : h("div", { class: "warn info" }, "This computer can run every step.")),
+    updatesCard());
+}
+
+// ------------------------------------------------------------------ Updates (on the System page)
+function updatesCard() {
+  const box = h("div", {});
+  const card = h("div", { class: "card" }, h("h2", { style: "margin-top:0" }, "Updates"), box);
+  const show = (u, busy) => {
+    const cur = u && u.current;
+    const fresh = u && u.checked && !u.error;
+    put(box,
+      cur ? h("div", { class: "kv" },
+        h("div", {}, "This version"), h("div", {}, h("span", { class: "mono" }, cur.commit), ` from ${cur.date}: ${cur.subject}`),
+        u.upstream ? [h("div", {}, "Compared with"), h("div", { class: "mono small" }, u.upstream)] : null) : null,
+      u && u.error ? warnBox({ level: "warning", message: u.error }) : null,
+      fresh && !u.new.length ? h("div", { class: "warn info" }, "You have the latest version.") : null,
+      u && (u.new || []).length ? [
+        h("h3", {}, `${u.new.length} newer change${u.new.length > 1 ? "s" : ""} on GitHub`),
+        h("div", { class: "table-wrap", style: "max-height:240px" }, h("table", { class: "data" }, h("tbody", {},
+          u.new.map((c) => h("tr", {}, h("td", { class: "mono small" }, c.commit), h("td", { class: "small" }, c.date), h("td", {}, c.subject)))))),
+        u.blocked ? warnBox({ level: "warning", message: "Can't update now. " + u.blocked }) : null] : null,
+      h("div", { class: "row", style: "margin-top:8px" },
+        h("button", { disabled: busy, onclick: async () => { show(u, true); show(await checkUpdates().catch((e) => ({ ...u, error: e.message })), false); } },
+          busy ? "Checking…" : "Check for updates"),
+        u && (u.new || []).length ? h("button", { class: "primary", disabled: busy || !!u.blocked, onclick: () => install(u) }, "Update now") : null),
+      h("div", { class: "small muted", style: "margin-top:6px" },
+        "Updating downloads the new version of the pipeline from GitHub and restarts this page. Your saved workflows, runs, databases and tool packs are kept. Every run records which version produced it."));
+  };
+  const install = async (u) => {
+    if (!confirm(`Update to the newest version (${u.new.length} change${u.new.length > 1 ? "s" : ""})? The page restarts afterwards.`)) return;
+    put(box, h("div", { class: "warn info" }, "Updating…"));
+    try {
+      const r = await api("updates/install", { body: {} });
+      if (!r.updated) return show(await checkUpdates(), false);
+      put(box, h("div", { class: "warn info" }, `Updated to ${r.current.commit}. Restarting…`));
+      for (let i = 0; i < 30; i++) { // wait for the restarted UI, then load the new page
+        await new Promise((ok) => setTimeout(ok, 1000));
+        try { await fetch("/api/updates?fetch=0"); location.reload(); return; } catch { /* not back yet */ }
+      }
+      put(box, warnBox({ level: "warning", message: "Updated, but the UI didn't come back. Close it and open the desktop shortcut again." }));
+    } catch (e) { show({ ...u, error: "Not updated: " + e.message }, false); }
+  };
+  show(S.updates, false);
+  if (!S.updates) checkUpdates(false).then((u) => show(u, false)).catch(() => {});
+  return card;
 }
 
 boot().catch((e) => { put($("#main"), h("div", { class: "warn error" }, "Could not load: " + e.message)); });
