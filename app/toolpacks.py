@@ -56,20 +56,24 @@ def _build_image(pack, repo_dir, log):
         env_text = (repo_dir / spec["environment_file"]).read_text()
     else:
         env_text = json.dumps({"name": "base", "channels": spec["channels"], "dependencies": spec["dependencies"]})
-    tag = f"ntg-local/{pack['id'].replace('_', '-')}:{hashlib.sha256((MICROMAMBA + env_text).encode()).hexdigest()[:12]}"
+    # procps gives `ps`, which Nextflow needs inside every task container to collect task metrics.
+    dockerfile = (
+        f"FROM {MICROMAMBA}\n"
+        "COPY --chown=$MAMBA_USER:$MAMBA_USER environment.yml /tmp/environment.yml\n"
+        "RUN micromamba install -y -n base -f /tmp/environment.yml && \\\n"
+        "    micromamba env export -n base > /opt/conda/ntg-environment.lock.yml && \\\n"
+        "    micromamba clean --all --yes\n"
+        "ENV PATH=/opt/conda/bin:$PATH\n"
+        "USER root\n"
+        "RUN apt-get update && apt-get install -y --no-install-recommends procps && \\\n"
+        "    rm -rf /var/lib/apt/lists/*\n")
+    tag = f"ntg-local/{pack['id'].replace('_', '-')}:{hashlib.sha256((dockerfile + env_text).encode()).hexdigest()[:12]}"
     if subprocess.run(["docker", "image", "inspect", tag], capture_output=True).returncode == 0:
         log(f"container {tag} already built")
         return tag
     with tempfile.TemporaryDirectory() as d:
         Path(d, "environment.yml").write_text(env_text)
-        Path(d, "Dockerfile").write_text(
-            f"FROM {MICROMAMBA}\n"
-            "COPY --chown=$MAMBA_USER:$MAMBA_USER environment.yml /tmp/environment.yml\n"
-            "RUN micromamba install -y -n base -f /tmp/environment.yml && \\\n"
-            "    micromamba env export -n base > /opt/conda/ntg-environment.lock.yml && \\\n"
-            "    micromamba clean --all --yes\n"
-            "ENV PATH=/opt/conda/bin:$PATH\n"
-            "USER root\n")
+        Path(d, "Dockerfile").write_text(dockerfile)
         log(f"building container {tag} (conda environment; takes a few minutes)")
         p = subprocess.run(["docker", "build", "-q", "-t", tag, d], capture_output=True, text=True)
         if p.returncode != 0:

@@ -10,8 +10,8 @@ Nextflow's work folder goes to $NTG_HOME/work/<run_id> (on the Linux disk:
 much faster than a Windows drive under WSL) and is deleted after a
 successful run when cleanup is on.
 """
+import csv
 import datetime as dt
-import glob
 import json
 import os
 import re
@@ -31,16 +31,65 @@ _lock = threading.Lock()
 WEBLOG_URL = None  # set by the server so Nextflow can post progress events
 
 
-def find_samples(input_dir, pattern="*_R{1,2}*.gz"):
-    """Same pairing as Nextflow's fromFilePairs: sample = text before _R1/_R2."""
-    pre, rest = pattern.split("{1,2}", 1)
-    lit = pre.lstrip("*")
-    out = []
-    for f in sorted(glob.glob(str(Path(input_dir) / (pre + "1" + rest)))):
-        name = Path(f).name
-        sample = name[: name.rfind(lit + "1")]
-        r2 = sorted(glob.glob(str(Path(input_dir) / (glob.escape(sample) + lit + "2" + rest))))
-        out.append({"sample": sample, "r1": f, "r2": r2[0] if r2 else None})
+READS_RE = re.compile(r"\.(fastq|fq)(\.gz)?$|\.gz$", re.I)
+# Tried in this order by Auto; the one that pairs the most files wins.
+PAIRINGS = [("_R1", "_R2"), (".R1", ".R2"), ("_1", "_2"), (".1", ".2")]
+
+
+def _pair(names, r1, r2):
+    """Pair file names on markers r1/r2: sample = text before the last r1 that isn't
+    followed by another digit (so _R1 matches _R1_001 but not _R10)."""
+    rx = re.compile(re.escape(r1) + r"(?!\d)")
+    have, pairs, used = set(names), [], set()
+    for n in names:
+        m = None
+        for m in rx.finditer(n):
+            pass
+        if not m:
+            continue
+        partner = n[: m.start()] + r2 + n[m.end():]
+        sample = n[: m.start()].rstrip("_.-") or n[: m.start()]
+        pairs.append({"sample": sample, "r1": n, "r2": partner if partner in have else None})
+        used.add(n)
+        if partner in have:
+            used.add(partner)
+    return pairs, used
+
+
+def find_samples(input_dir, pairing=None):
+    """Pair the reads in input_dir. pairing: {mode: auto|custom, r1, r2}.
+    Returns {samples: [{sample, r1, r2}], unpaired: [names], r1, r2, mode}: what
+    the Run page shows, and exactly what goes into the run's samples.csv."""
+    pairing = pairing or {}
+    d = Path(input_dir).expanduser()
+    names = sorted(f.name for f in d.iterdir() if f.is_file() and READS_RE.search(f.name)) if d.is_dir() else []
+    if pairing.get("mode") == "custom" and pairing.get("r1") and pairing.get("r2"):
+        tries = [(pairing["r1"], pairing["r2"])]
+    else:
+        tries = PAIRINGS
+    best = None
+    for r1, r2 in tries:
+        pairs, used = _pair(names, r1, r2)
+        score = sum(1 for p in pairs if p["r2"])
+        if best is None or score > best[0]:
+            best = (score, r1, r2, pairs, used)
+    _, r1, r2, pairs, used = best
+    for p in pairs:
+        p["r1"] = str(d / p["r1"])
+        p["r2"] = str(d / p["r2"]) if p["r2"] else None
+    return {"samples": pairs, "unpaired": [n for n in names if n not in used],
+            "r1": r1, "r2": r2, "mode": "custom" if len(tries) == 1 else "auto"}
+
+
+def pairing_problems(found):
+    """Plain error messages for pairs that can't run."""
+    out, seen = [], {}
+    for s in found["samples"]:
+        if not s["r2"]:
+            out.append(f"{s['sample']}: {Path(s['r1']).name} has no matching {found['r2']} file.")
+        seen.setdefault(s["sample"], []).append(s)
+    out += [f"Sample name {k} is used by {len(v)} pairs: rename the files or change the pairing."
+            for k, v in seen.items() if len(v) > 1]
     return out
 
 
@@ -75,12 +124,16 @@ def list_runs():
     return out
 
 
-def start(wf_id, version, input_dir, name=None, cleanup=True, steps_off=(), extra=None, wait=False):
+def start(wf_id, version, input_dir, name=None, cleanup=True, steps_off=(), extra=None, wait=False, pairing=None):
     wf = catalog.load_workflow(wf_id, version)
     input_dir = str(Path(input_dir).expanduser().resolve())
-    samples = find_samples(input_dir, (wf.get("input") or {}).get("pattern", "*_R{1,2}*.gz"))
+    found = find_samples(input_dir, pairing)
+    samples = found["samples"]
     if not samples:
         raise ValueError(f"no paired reads found in {input_dir}")
+    problems = pairing_problems(found)
+    if problems:
+        raise ValueError(" ".join(problems))
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     run_id = f"{stamp}_{re.sub(r'[^A-Za-z0-9_-]+', '-', name or wf_id)[:40]}"
     rdir = RUNS / run_id
@@ -89,13 +142,20 @@ def start(wf_id, version, input_dir, name=None, cleanup=True, steps_off=(), extr
     run = {
         "id": run_id, "name": name or wf["name"], "workflow": {"id": wf["id"], "version": wf["_version"], "name": wf["name"]},
         "input": input_dir, "samples": [s["sample"] for s in samples], "n_samples": len(samples),
+        "pairing": {"mode": found["mode"], "r1": found["r1"], "r2": found["r2"], "unpaired": found["unpaired"]},
         "cleanup": bool(cleanup), "steps_off": steps_off, "status": "starting",
         "started": dt.datetime.now().isoformat(timespec="seconds"), "finished": None,
         "results": str(rdir / "results"), "work": str(WORK / run_id), "steps": {}, "error": None,
     }
     save(run)
+    # The pairs exactly as shown on the Run page; Nextflow reads them from here.
+    with open(rdir / "samples.csv", "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["sample", "r1", "r2"])
+        w.writerows([s["sample"], s["r1"], s["r2"]] for s in samples)
     cmd = ["nextflow", "run", "main.nf", "-profile", _profile(), "-w", run["work"],
-           "--input", input_dir, "--outdir", "results", "--cleanup", str(bool(cleanup)).lower()]
+           "--input", input_dir, "--samplesheet", str(rdir / "samples.csv"),
+           "--outdir", "results", "--cleanup", str(bool(cleanup)).lower()]
     for s in steps_off:
         cmd += [f"--steps.{s}", "false"]
     if WEBLOG_URL:

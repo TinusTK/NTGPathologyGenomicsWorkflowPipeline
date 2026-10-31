@@ -123,7 +123,21 @@ def _process(r):
     L.append(f"    tag {{ \"${{meta.id}}\" }}" if per_sample else f"    tag '{sid}'")
     L.append(f"    container '{tool['container']}'")
     L.append(f"    cpus {int(res.get('cpus', 1))}")
-    L.append(f"    memory '{int(res.get('memory_gb', 2))} GB'")
+    if res.get("memory_setting"):
+        # Memory from a setting: a number = that many GB; 0/blank = Auto = the tool's
+        # amount (or its low-memory amount), but leave 2 GB for the rest of the computer.
+        ram = f"params.settings.{sid}.{res['memory_setting']}.toString()"
+        want = str(int(res.get("memory_gb", 2)))
+        if res.get("low_memory_setting"):
+            want = (f"(params.settings.{sid}.{res['low_memory_setting']}.toString() == 'true' ? "
+                    f"{int(res['low_memory_gb'])} : {want})")
+        L += ["    memory {",
+              f"        def ram = {ram}",
+              "        def total = (java.lang.management.ManagementFactory.operatingSystemMXBean.totalMemorySize / 1073741824) as int",
+              f"        \"${{ram.isInteger() && ram.toInteger() > 0 ? ram.toInteger() : Math.min({want}, Math.max(4, total - 2))}} GB\"",
+              "    }"]
+    else:
+        L.append(f"    memory '{int(res.get('memory_gb', 2))} GB'")
     pub = step.get("publish") or (f"samples/${{meta.id}}/{sid}" if per_sample else f"combined/{sid}")
     L.append(f"    publishDir path: {{ \"${{params.outdir}}/{pub}\" }}, mode: 'copy', "
              "saveAs: { fn -> fn.startsWith('out/') ? fn.substring(4) : null }")
@@ -266,9 +280,13 @@ def compile_workflow(wf, tools=None, databases=None):
     body = [
         "workflow {",
         "    main:",
-        "    def ch_input = channel",
-        f"        .fromFilePairs(\"${{params.input}}/${{params.reads_pattern}}\", checkIfExists: true)",
-        "        .map { id, files -> tuple([id: id], files) }",
+        "    // The UI pairs the reads and passes them as samples.csv (sample,r1,r2);",
+        "    // without one, pair the files in --input with reads_pattern.",
+        "    def ch_input = params.samplesheet",
+        "        ? channel.fromPath(params.samplesheet, checkIfExists: true).splitCsv(header: true)",
+        "            .map { row -> tuple([id: row.sample], [file(row.r1, checkIfExists: true), file(row.r2, checkIfExists: true)]) }",
+        f"        : channel.fromFilePairs(\"${{params.input}}/${{params.reads_pattern}}\", checkIfExists: true)",
+        "            .map { id, files -> tuple([id: id], files) }",
         "    def versions = channel.empty()",
         "",
     ]

@@ -48,6 +48,7 @@ const S = {
   wfId: null, wfVersion: null, wf: null, galaxy: null,
   editing: false, draft: null, selected: null, dirty: false,
   runTimer: null,
+  usageTimer: null,
 };
 
 async function boot() {
@@ -71,10 +72,29 @@ async function loadTools() { S.tools = Object.fromEntries((await api("tools")).m
 async function loadWorkflows() { S.workflows = await api("workflows"); }
 async function loadHardware() {
   S.hw = await api("hardware");
+  showUsage(null);
+  if (!S.usageTimer) { pollUsage(); S.usageTimer = setInterval(pollUsage, 2000); }
+}
+// Top bar: live CPU use, clock speed and RAM, every 2 s while the tab is visible.
+async function pollUsage() {
+  if (document.hidden) return;
+  try { showUsage(await api("usage")); } catch { /* UI restarting: keep the last values */ }
+}
+function showUsage(u) {
   const hw = S.hw;
-  $("#hw-chip").textContent = `${hw.cpus} CPUs · ${Math.round(hw.memory_gb)} GB RAM · ` +
-    `${hw.disk_free_gb.work ?? "?"} GB free · Docker ${hw.docker ? hw.docker : "NOT RUNNING"}`;
-  $("#hw-chip").style.color = hw.docker ? "" : "var(--err)";
+  const parts = [`${hw.cpus} CPUs`];
+  if (u) {
+    if (u.cpu_percent != null) parts.push(`CPU ${Math.round(u.cpu_percent)}%`);
+    if (u.cpu_ghz != null) parts.push(`${u.cpu_ghz.toFixed(2)} GHz${u.cpu_ghz_kind === "base" ? " (base)" : ""}`);
+    parts.push(`RAM ${u.memory_used_gb.toFixed(1)} / ${Math.round(u.memory_gb)} GB`);
+  } else {
+    parts.push(`${Math.round(hw.memory_gb)} GB RAM`);
+  }
+  parts.push(`${(u ? u.disk_free_gb : hw.disk_free_gb.work) ?? "?"} GB free`, `Docker ${hw.docker ? hw.docker : "NOT RUNNING"}`);
+  const chip = $("#hw-chip");
+  chip.textContent = parts.join(" · ");
+  chip.style.color = hw.docker ? "" : "var(--err)";
+  chip.title = u && u.cpu_ghz_kind === "base" ? "This computer (live clock speed not readable here: showing the base clock)" : "This computer (updates every 2 seconds)";
 }
 
 function go(page, arg) {
@@ -446,11 +466,23 @@ async function pageRun() {
   const preset = S.runPreset || { id: S.wfId || (S.workflows[0] || {}).id };
   S.runPreset = null;
   const main = $("#main");
-  const state = { id: preset.id, version: preset.version, input: S.lastInput || "", off: new Set(), cleanup: true, wf: null };
+  const state = { id: preset.id, version: preset.version, input: S.lastInput || "", off: new Set(), cleanup: true, wf: null,
+    pairing: S.lastPairing || { mode: "auto", r1: "_R1", r2: "_R2" } };
   const wfSel = h("select", { onchange: async (e) => { state.id = e.target.value; state.version = null; await loadWf(); } },
     S.workflows.map((w) => h("option", { value: w.id, selected: w.id === state.id }, w.name)));
   const verSel = h("select", { onchange: async (e) => { state.version = +e.target.value; await loadWf(); } });
-  const input = h("input", { type: "text", class: "wide", value: state.input, placeholder: "/path/to/reads folder", oninput: (e) => { state.input = e.target.value; } });
+  let typing;
+  const recheck = () => { clearTimeout(typing); typing = setTimeout(check, 400); };
+  const input = h("input", { type: "text", class: "wide", value: state.input, placeholder: "/path/to/reads folder", oninput: (e) => { state.input = e.target.value; recheck(); } });
+  const pairBox = h("div", {});
+  const marker = (k) => h("input", { type: "text", class: "mono", style: "width:7em", value: state.pairing[k],
+    oninput: (e) => { state.pairing[k] = e.target.value; recheck(); } });
+  const customBox = h("span", { class: "row", style: "gap:6px" }, "R1 marker", marker("r1"), "R2 marker", marker("r2"));
+  const showCustom = () => { customBox.style.display = state.pairing.mode === "custom" ? "" : "none"; };
+  const pairMode = h("select", { onchange: (e) => { state.pairing.mode = e.target.value; showCustom(); check(); } },
+    h("option", { value: "auto", selected: state.pairing.mode === "auto" }, "Auto-detect"),
+    h("option", { value: "custom", selected: state.pairing.mode === "custom" }, "Custom"));
+  showCustom();
   const name = h("input", { type: "text", class: "wide", placeholder: "optional, e.g. 2026-10-29 run 1" });
   const cleanup = h("input", { type: "checkbox", checked: true, onchange: (e) => { state.cleanup = e.target.checked; } });
   const stepsBox = h("div", { class: "steps-list" });
@@ -463,6 +495,10 @@ async function pageRun() {
       h("h3", {}, "Reads folder"),
       h("div", { class: "row" }, h("div", { style: "flex:1" }, input), h("button", { onclick: () => browse(state.input, (p) => { input.value = state.input = p; check(); }) }, "Browse…"), h("button", { onclick: check }, "Check")),
       h("div", { class: "small muted" }, "A folder with <sample>_R1…gz and <sample>_R2…gz files. Under WSL, Windows drives are at /mnt/c, /mnt/d …"),
+      h("h3", {}, "Read pairing"),
+      h("div", { class: "row" }, pairMode, customBox),
+      h("div", { class: "small muted" }, "Auto tries _R1/_R2, .R1/.R2, _1/_2 and .1/.2 and keeps the one that pairs the most files. Custom: the text that marks read 1 and read 2 in your file names. The sample name is everything before the marker. Check the pairs below before starting: the run uses exactly these (saved as samples.csv in the run folder)."),
+      pairBox,
       h("h3", {}, "Run name"), name,
       h("h3", {}, "Intermediate files"),
       h("label", { class: "switch" }, cleanup, h("b", {}, "Clean up after a successful run")),
@@ -494,20 +530,42 @@ async function pageRun() {
     const seq = ++checkSeq;
     put(checkBox, h("div", { class: "muted" }, "Checking…"));
     const wf = rawWorkflow(state.wf);
-    const r = await api("workflows/check", { body: { workflow: wf, input: state.input || null, steps_off: [...state.off] } }).catch((e) => ({ warnings: [{ level: "error", message: e.message }], samples: [] }));
+    const r = await api("workflows/check", { body: { workflow: wf, input: state.input || null, steps_off: [...state.off], pairing: state.pairing } }).catch((e) => ({ warnings: [{ level: "error", message: e.message }], samples: [] }));
     if (seq !== checkSeq) return;
     const errors = r.warnings.filter((w) => w.level === "error");
     startBtn.disabled = errors.length > 0 || !state.input || !r.samples.length;
-    put(checkBox, 
+    renderPairs(r.pairing);
+    put(checkBox,
       r.samples.length ? h("div", {}, h("b", {}, `${r.samples.length} sample(s) found: `), r.samples.map((s) => s.sample).join(", ")) : null,
       r.warnings.length ? r.warnings.map(warnBox) : h("div", { class: "warn info" }, "No problems found for this computer."),
       !state.input ? h("div", { class: "muted small" }, "Pick a reads folder to check the samples.") : null);
+  }
+  // Live view of how the reads were paired, so the user can see every pair before starting.
+  function renderPairs(p) {
+    if (!p) return put(pairBox);
+    const base = (f) => f ? f.split("/").pop() : null;
+    const counts = {};
+    p.samples.forEach((s) => { counts[s.sample] = (counts[s.sample] || 0) + 1; });
+    put(pairBox,
+      h("div", { class: "small", style: "margin:8px 0 4px" }, h("b", {}, `${p.samples.filter((s) => s.r2).length} pair(s)`),
+        ` matched on ${p.r1} / ${p.r2}`, p.mode === "auto" ? " (auto-detected)" : " (custom)",
+        p.unpaired.length ? h("span", { style: "color:var(--err)" }, ` · ${p.unpaired.length} file(s) not paired`) : null),
+      p.samples.length || p.unpaired.length ? h("div", { class: "table-wrap", style: "max-height:300px" }, h("table", { class: "data" },
+        h("thead", {}, h("tr", {}, h("th", {}, "Sample"), h("th", {}, "Read 1"), h("th", {}, "Read 2"))),
+        h("tbody", {},
+          p.samples.map((s) => h("tr", {},
+            h("td", { style: counts[s.sample] > 1 ? "color:var(--err)" : "" }, s.sample, counts[s.sample] > 1 ? " (duplicate name)" : ""),
+            h("td", { class: "mono small", style: "word-break:break-all" }, base(s.r1)),
+            h("td", { class: "mono small", style: "word-break:break-all" + (s.r2 ? "" : ";color:var(--err)") }, base(s.r2) || `✗ no matching ${p.r2} file`))),
+          p.unpaired.map((f) => h("tr", {},
+            h("td", { class: "muted" }, "not paired"), h("td", { class: "mono small", colspan: 2, style: "word-break:break-all;color:var(--err)" }, f)))))) : null);
   }
   async function start() {
     startBtn.disabled = true;
     try {
       S.lastInput = state.input;
-      const run = await api("runs", { body: { workflow: state.id, version: state.version, input: state.input, name: name.value || null, cleanup: state.cleanup, steps_off: [...state.off] } });
+      S.lastPairing = { ...state.pairing };
+      const run = await api("runs", { body: { workflow: state.id, version: state.version, input: state.input, name: name.value || null, cleanup: state.cleanup, steps_off: [...state.off], pairing: state.pairing } });
       toast("Run started");
       go("runs", run.id);
     } catch (e) { toast("Could not start: " + e.message, 8000); startBtn.disabled = false; }

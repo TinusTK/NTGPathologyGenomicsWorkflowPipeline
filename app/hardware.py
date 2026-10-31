@@ -2,6 +2,8 @@
 import os
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 from . import catalog
@@ -59,6 +61,101 @@ def check():
             "work": _free_gb(catalog.HOME / "work"),
             "databases": _free_gb(db_dir),
         },
+    }
+
+
+def _cpu_times():
+    try:
+        v = [int(x) for x in open("/proc/stat").readline().split()[1:]]
+    except (OSError, ValueError):
+        return None
+    return sum(v), v[3] + (v[4] if len(v) > 4 else 0)  # total, idle + iowait
+
+
+_last_cpu = None
+
+
+def _cpu_percent():
+    """CPU use since the previous call (the top bar polls every few seconds)."""
+    global _last_cpu
+    now = _cpu_times()
+    if now is None:
+        return None
+    if _last_cpu is None:
+        time.sleep(0.25)
+        _last_cpu, now = now, _cpu_times()
+    (t0, i0), (t1, i1) = _last_cpu, now
+    _last_cpu = now
+    return round(100 * (1 - (i1 - i0) / (t1 - t0)), 1) if t1 > t0 else 0.0
+
+
+# WSL only sees the CPU's fixed base clock, so the live clock is read from Windows:
+# base MHz x "% Processor Performance" (above 100% = turbo). A PowerShell loop runs
+# for a minute at a time and is only restarted while someone is watching the top bar.
+_WIN_CLOCK = ("$m=(Get-CimInstance Win32_Processor | Select -First 1).MaxClockSpeed; foreach($i in 1..30){ "
+              "$p=(Get-Counter '\\Processor Information(_Total)\\% Processor Performance').CounterSamples[0].CookedValue; "
+              "[Console]::Out.WriteLine(\"$m $p\"); Start-Sleep -Seconds 1 }")
+_clock = {"ghz": None, "asked": 0.0, "thread": None}
+_clock_lock = threading.Lock()
+
+
+def _windows_clock_loop():
+    while time.time() - _clock["asked"] < 30:
+        try:
+            p = subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", _WIN_CLOCK],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        except OSError:
+            break
+        for line in p.stdout:
+            try:
+                mhz, perf = (float(x) for x in line.split())
+                _clock["ghz"] = round(mhz * perf / 100 / 1000, 2)
+            except ValueError:
+                pass
+        if p.wait() != 0 and _clock["ghz"] is None:
+            break  # Windows counters not readable: stop trying, fall back to /proc
+    with _clock_lock:
+        _clock["thread"] = None
+
+
+def _cpu_ghz(wsl):
+    if wsl and shutil.which("powershell.exe"):
+        with _clock_lock:
+            _clock["asked"] = time.time()
+            if _clock["thread"] is None:
+                _clock["thread"] = threading.Thread(target=_windows_clock_loop, daemon=True)
+                _clock["thread"].start()
+        if _clock["ghz"] is not None:
+            return _clock["ghz"], "live"
+    freqs = []
+    for f in Path("/sys/devices/system/cpu").glob("cpu[0-9]*/cpufreq/scaling_cur_freq"):
+        try:
+            freqs.append(int(f.read_text()) / 1e6)  # kHz -> GHz
+        except (OSError, ValueError):
+            pass
+    if freqs:
+        return round(sum(freqs) / len(freqs), 2), "live"
+    try:
+        mhz = [float(l.split(":")[1]) for l in open("/proc/cpuinfo") if l.startswith("cpu MHz")]
+    except (OSError, ValueError):
+        mhz = []
+    return (round(sum(mhz) / len(mhz) / 1000, 2), "base") if mhz else (None, None)
+
+
+def usage():
+    """Live use of this computer, for the top bar (cheap: no docker/nextflow calls)."""
+    mem = _meminfo()
+    wsl = "microsoft" in Path("/proc/version").read_text().lower() if Path("/proc/version").exists() else False
+    ghz, ghz_kind = _cpu_ghz(wsl)
+    total, avail = mem.get("MemTotal", 0), mem.get("MemAvailable", 0)
+    return {
+        "cpus": os.cpu_count(),
+        "cpu_percent": _cpu_percent(),
+        "cpu_ghz": ghz,
+        "cpu_ghz_kind": ghz_kind,
+        "memory_gb": round(total, 1),
+        "memory_used_gb": round(total - avail, 1),
+        "disk_free_gb": _free_gb(catalog.HOME / "work"),
     }
 
 

@@ -142,6 +142,8 @@ class Handler(BaseHTTPRequestHandler):
         g, post, delete = method == "GET", method == "POST", method == "DELETE"
         if g and p == ["hardware"]:
             return self._send(200, hardware.check())
+        if g and p == ["usage"]:
+            return self._send(200, hardware.usage())
         if g and p == ["updates"]:
             return self._send(200, updates.status(fetch=q.get("fetch") != "0"))
         if post and p == ["updates", "install"]:
@@ -174,16 +176,17 @@ class Handler(BaseHTTPRequestHandler):
             for s in b.get("steps_off") or []:
                 if s in wf["steps"]:
                     wf["steps"][s] = {**wf["steps"][s], "enabled": False}
-            samples = runs.find_samples(b["input"], (wf.get("input") or {}).get("pattern", "*_R{1,2}*.gz")) if b.get("input") else []
+            found = runs.find_samples(b["input"], b.get("pairing")) if b.get("input") else None
+            samples = found["samples"] if found else []
             warns = hardware.warnings(wf, tools=tools, n_samples=len(samples) or None)
             if error:
                 warns.insert(0, {"level": "error", "step": None, "message": error})
-            if b.get("input") and not samples:
-                warns.insert(0, {"level": "error", "step": None, "message": f"No paired reads (*_R1*/_R2*.gz) found in {b['input']}."})
-            for s in samples:
-                if not s["r2"]:
-                    warns.append({"level": "error", "step": None, "message": f"{s['sample']}: R1 has no matching R2 file."})
-            return self._send(200, {"warnings": warns, "samples": samples})
+            if found and not samples:
+                warns.insert(0, {"level": "error", "step": None, "message":
+                                 f"No paired reads found in {b['input']} (pairing on {found['r1']} / {found['r2']})."})
+            if found:
+                warns += [{"level": "error", "step": None, "message": m} for m in runs.pairing_problems(found)]
+            return self._send(200, {"warnings": warns, "samples": samples, "pairing": found})
         if g and p == ["browse"]:
             path = Path(q.get("path") or Path.home()).expanduser()
             dirs = sorted(d.name for d in path.iterdir() if d.is_dir() and not d.name.startswith(".")) if path.is_dir() else []
@@ -212,7 +215,8 @@ class Handler(BaseHTTPRequestHandler):
         if post and p == ["runs"]:
             b = self._body()
             run = runs.start(b["workflow"], b.get("version"), b["input"], name=b.get("name"),
-                             cleanup=b.get("cleanup", True), steps_off=b.get("steps_off") or [])
+                             cleanup=b.get("cleanup", True), steps_off=b.get("steps_off") or [],
+                             pairing=b.get("pairing"))
             return self._send(200, run)
         if g and len(p) == 2 and p[0] == "runs":
             return self._send(200, runs.detail(p[1]))

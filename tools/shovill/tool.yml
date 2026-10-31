@@ -11,12 +11,14 @@ license: GPL-3.0
 citation: "Seemann T. Shovill: faster SPAdes assembly of Illumina reads. https://github.com/tseemann/shovill"
 container: quay.io/biocontainers/shovill:1.4.2--hdfd78af_1
 scope: per_sample
-resources: {cpus: 12, memory_gb: 12}
+resources: {cpus: 12, memory_gb: 12, memory_setting: ram, low_memory_setting: low_memory, low_memory_gb: 8}
 requirements:
   memory_gb: 8
   recommended_memory_gb: 16
   disk_gb_per_sample: 5
-  note: SPAdes needs more memory for large genomes or very deep data.
+  note: >-
+    SPAdes needs more memory for large genomes or very deep data. On a smaller
+    computer, lower Memory or turn on Low-memory mode in Shovill's settings.
 
 inputs:
   reads: {type: reads, description: Paired reads (trimmed by fastp, or raw if fastp is off).}
@@ -39,6 +41,25 @@ settings:
     description: >-
       Reads are randomly sub-sampled down to this depth before assembly (faster,
       same result for most genomes). 0 = use all reads.
+  ram:
+    label: Memory (GB)
+    type: integer
+    default: 0
+    auto: {value: 0, label: "12 GB, less on small computers"}
+    description: >-
+      Most memory the assembly may use. Auto = 12 GB (8 GB in Low-memory mode),
+      but never more than this computer's RAM minus 2 GB (at least 4 GB). If
+      SPAdes needs more than this it stops with an error. The amount used is
+      saved in the run's provenance.
+  low_memory:
+    label: Low-memory mode
+    type: boolean
+    default: false
+    description: >-
+      For computers with less than 16 GB RAM. Auto memory drops to 8 GB, reads
+      are sub-sampled to at most 100x depth and SPAdes uses at most 8 threads.
+      Uses clearly less memory; the lower depth can change the assembly slightly
+      compared with Galaxy (150x). Saved in the run's provenance.
   gsize:
     label: Genome size
     type: string
@@ -93,13 +114,23 @@ command: |
   [ -n "$S_opts" ] && args+=(--opts "$S_opts")
   [ "$S_trim" = true ] && args+=(--trim)
   [ "$S_nocorr" = true ] && args+=(--nocorr)
+  threads="$CPUS"; depth="$S_depth"
+  if [ "$S_low_memory" = true ]; then
+      [ "$threads" -gt 8 ] && threads=8
+      if [ "$depth" -eq 0 ] || [ "$depth" -gt 100 ]; then depth=100; fi
+      echo "low_memory: on (depth ${depth}x, $threads threads)" >> .ntg_notes
+  fi
+  case "$S_ram" in
+      ''|0) echo "memory: $MEM_GB GB (auto)" >> .ntg_notes ;;
+      *) echo "memory: $MEM_GB GB (set by user)" >> .ntg_notes ;;
+  esac
   shovill \
       --outdir shovill_out \
-      --cpus "$CPUS" \
+      --cpus "$threads" \
       --ram "$MEM_GB" \
       --R1 "$IN_reads_1" --R2 "$IN_reads_2" \
       --namefmt "$S_namefmt" \
-      --depth "$S_depth" \
+      --depth "$depth" \
       --minlen "$S_minlen" \
       --mincov "$S_mincov" \
       --assembler "$S_assembler" \

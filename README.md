@@ -197,7 +197,10 @@ nextflow run . -profile docker --input reads --steps.kraken2 false   # skip a st
 ```
 
 Reads: a folder of `<sample>_R1….gz` / `<sample>_R2….gz` files; the sample
-name is everything before `_R1` / `_R2`.
+name is everything before `_R1` / `_R2`. The Run page pairs the files
+automatically (`_R1/_R2`, `.R1/.R2`, `_1/_2` or `.1/.2`) or with your own
+markers, and shows every pair before you start; the run keeps the pairs in
+`samples.csv`.
 
 ## Results
 

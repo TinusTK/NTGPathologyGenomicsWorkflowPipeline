@@ -16,6 +16,12 @@ citation: "..."
 container: quay.io/biocontainers/mytool:1.2.3--h1234_0   # pin an exact tag
 scope: per_sample          # or all_samples (runs once on every sample's file)
 resources: {cpus: 4, memory_gb: 4}
+# Optional: let a setting choose the memory (0/blank = Auto = memory_gb, or
+# low_memory_gb when the boolean low_memory_setting is on; never more than the
+# computer's RAM minus 2 GB, at least 4 GB). See tools/shovill/tool.yml.
+#   memory_setting: ram
+#   low_memory_setting: low_memory
+#   low_memory_gb: 8
 requirements:              # used for the hardware warnings
   memory_gb: 2             # error below this
   recommended_memory_gb: 8 # warning below this

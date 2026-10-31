@@ -45,7 +45,11 @@ process STEP_shovill {
     tag { "${meta.id}" }
     container 'quay.io/biocontainers/shovill:1.4.2--hdfd78af_1'
     cpus 12
-    memory '12 GB'
+    memory {
+        def ram = params.settings.shovill.ram.toString()
+        def total = (java.lang.management.ManagementFactory.operatingSystemMXBean.totalMemorySize / 1073741824) as int
+        "${ram.isInteger() && ram.toInteger() > 0 ? ram.toInteger() : Math.min((params.settings.shovill.low_memory.toString() == 'true' ? 8 : 12), Math.max(4, total - 2))} GB"
+    }
     publishDir path: { "${params.outdir}/samples/${meta.id}/shovill" }, mode: 'copy', saveAs: { fn -> fn.startsWith('out/') ? fn.substring(4) : null }
 
     input:
@@ -63,6 +67,8 @@ process STEP_shovill {
     mkdir -p out tooldir
     export S_assembler='${params.settings.shovill.assembler}'
     export S_depth='${params.settings.shovill.depth}'
+    export S_ram='${params.settings.shovill.ram}'
+    export S_low_memory='${params.settings.shovill.low_memory}'
     export S_gsize='${params.settings.shovill.gsize}'
     export S_minlen='${params.settings.shovill.minlen}'
     export S_mincov='${params.settings.shovill.mincov}'
@@ -79,13 +85,23 @@ process STEP_shovill {
     [ -n "\$S_opts" ] && args+=(--opts "\$S_opts")
     [ "\$S_trim" = true ] && args+=(--trim)
     [ "\$S_nocorr" = true ] && args+=(--nocorr)
+    threads="\$CPUS"; depth="\$S_depth"
+    if [ "\$S_low_memory" = true ]; then
+        [ "\$threads" -gt 8 ] && threads=8
+        if [ "\$depth" -eq 0 ] || [ "\$depth" -gt 100 ]; then depth=100; fi
+        echo "low_memory: on (depth \${depth}x, \$threads threads)" >> .ntg_notes
+    fi
+    case "\$S_ram" in
+        ''|0) echo "memory: \$MEM_GB GB (auto)" >> .ntg_notes ;;
+        *) echo "memory: \$MEM_GB GB (set by user)" >> .ntg_notes ;;
+    esac
     shovill \\
         --outdir shovill_out \\
-        --cpus "\$CPUS" \\
+        --cpus "\$threads" \\
         --ram "\$MEM_GB" \\
         --R1 "\$IN_reads_1" --R2 "\$IN_reads_2" \\
         --namefmt "\$S_namefmt" \\
-        --depth "\$S_depth" \\
+        --depth "\$depth" \\
         --minlen "\$S_minlen" \\
         --mincov "\$S_mincov" \\
         --assembler "\$S_assembler" \\
@@ -660,9 +676,13 @@ process STEP_summary {
 
 workflow {
     main:
-    def ch_input = channel
-        .fromFilePairs("${params.input}/${params.reads_pattern}", checkIfExists: true)
-        .map { id, files -> tuple([id: id], files) }
+    // The UI pairs the reads and passes them as samples.csv (sample,r1,r2);
+    // without one, pair the files in --input with reads_pattern.
+    def ch_input = params.samplesheet
+        ? channel.fromPath(params.samplesheet, checkIfExists: true).splitCsv(header: true)
+            .map { row -> tuple([id: row.sample], [file(row.r1, checkIfExists: true), file(row.r2, checkIfExists: true)]) }
+        : channel.fromFilePairs("${params.input}/${params.reads_pattern}", checkIfExists: true)
+            .map { id, files -> tuple([id: id], files) }
     def versions = channel.empty()
 
     // ---- fastp
