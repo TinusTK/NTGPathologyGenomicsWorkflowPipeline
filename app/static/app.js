@@ -748,7 +748,10 @@ async function pageTools() {
         h("td", {}, h("b", {}, p.name), h("div", { class: "muted small" }, p.description)),
         h("td", { class: "small" }, h("a", { href: p.repo, target: "_blank", rel: "noopener" }, p.repo.replace("https://github.com/", "")), h("div", { class: "mono muted" }, "@ " + String(p.commit).slice(0, 12))),
         h("td", { class: "small" }, p.tools.join(", ")),
-        h("td", {}, p.installed ? [h("span", { class: "badge ok" }, "installed"), " ", h("button", { onclick: async () => { if (confirm(`Uninstall ${p.name}? Workflows that use it will show a missing tool.`)) { await api("packs/uninstall", { body: { id: p.id } }); pageTools(); } } }, "Uninstall")]
+        h("td", {}, p.installed ? [h("span", { class: "badge ok" }, "installed"), " ",
+          h("button", { title: "Install again: rebuilds the container and replaces the pack's files (saved workflows are kept)",
+            onclick: () => { if (confirm(`Reinstall ${p.name}? This rebuilds its container and takes a few minutes.`)) runJob("packs/install", { source: p.id }, jobBox, pageTools); } }, "Reinstall"), " ",
+          h("button", { onclick: async () => { if (confirm(`Uninstall ${p.name}? Workflows that use it will show a missing tool.`)) { await api("packs/uninstall", { body: { id: p.id } }); pageTools(); } } }, "Uninstall")]
           : h("button", { class: "primary", onclick: () => runJob("packs/install", { source: p.id }, jobBox, pageTools) }, "Install")))))),
       h("h3", {}, "Install from a git URL"),
       h("div", { class: "row" }, h("div", { style: "flex:1" }, urlInput), h("button", { onclick: () => urlInput.value && runJob("packs/install", { source: urlInput.value.trim() }, jobBox, pageTools) }, "Install")),
