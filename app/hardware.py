@@ -198,12 +198,16 @@ def warnings(wf, hw=None, tools=None, databases=None, n_samples=None):
     for sid, step in (wf.get("steps") or {}).items():
         if not will_run.get(sid, step.get("enabled", True)):
             continue
-        tool = tools.get(step["tool"])
+        tool = catalog.step_tool(tools, step)
         if not tool:
-            add("error", f"Tool '{step['tool']}' is not installed.", sid)
+            add("error", f"Tool '{step['tool']}' version {step.get('tool_version')} is not installed." if step["tool"] in tools
+                else f"Tool '{step['tool']}' is not installed.", sid)
             continue
         req = tool.get("requirements") or {}
         label = f"{step.get('label') or tool['name']} ({tool['name']})"
+        if tool.get("untested"):
+            add("warning", f"{label} uses {tool['name']} {tool['version']}, which was added on the Tools page and "
+                "hasn't had a successful run yet (untested). Check its results carefully.", sid)
         if req.get("memory_gb", 0) > mem:
             add("error", f"{label} needs at least {req['memory_gb']} GB RAM; this computer has {mem:.0f} GB.", sid)
         elif req.get("recommended_memory_gb", 0) > mem:

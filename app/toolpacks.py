@@ -107,22 +107,38 @@ def install(source, log=print):
         dest = catalog.HOME / "tools" / pack["id"]
         shutil.rmtree(dest, ignore_errors=True)
         for tool in pack["tools"]:
-            tdir = dest / tool["id"]
-            tdir.mkdir(parents=True)
-            names = []
-            for rel in tool.get("files") or []:
-                src = repo_dir / rel
-                target = tdir / src.name
-                (shutil.copytree if src.is_dir() else shutil.copy2)(src, target)
-                names.append(src.name)
-            t = {**tool, "files": names, "container": tool.get("container", image),
-                 "source": {"pack": pack["id"], "repo": pack["repo"], "commit": commit}}
-            catalog.dump_yaml(t, tdir / "tool.yml")
+            install_tool(pack, tool, repo_dir, image, commit, dest / tool["id"])
             log(f"installed tool {tool['id']} ({tool['name']} {tool.get('version', '')})")
         catalog.dump_yaml({k: v for k, v in pack.items() if k != "tools"}, dest / "pack.yml")
         return pack
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def install_tool(pack, tool, repo_dir, image, commit, tdir, extra=None):
+    """Write one tool of a pack into tdir: its files from the clone, plus tool.yml."""
+    tdir.mkdir(parents=True)
+    names = []
+    for rel in tool.get("files") or []:
+        src = repo_dir / rel
+        (shutil.copytree if src.is_dir() else shutil.copy2)(src, tdir / src.name)
+        names.append(src.name)
+    t = {**tool, "files": names, "container": tool.get("container", image),
+         "source": {"pack": pack["id"], "repo": pack["repo"], "commit": commit}, **(extra or {})}
+    catalog.dump_yaml(t, tdir / "tool.yml")
+    return t
+
+
+def fetch_pack(pack_id, commit, dest, log=print):
+    """Clone a pack's repo at commit into dest and build its container: (pack, image, commit)."""
+    pack = catalog.load_yaml(_packs_dir() / f"{pack_id}.yml") if (_packs_dir() / f"{pack_id}.yml").exists() \
+        else catalog.load_yaml(catalog.HOME / "tools" / pack_id / "pack.yml")
+    commit = _clone(pack["repo"], commit, dest)
+    if not pack.get("tools"):  # installed from a URL: the tool definitions live in the repo
+        pack = {**catalog.load_yaml(dest / "ntg" / "pack.yml"), "repo": pack["repo"]}
+    pack["commit"] = commit
+    image = (pack.get("container") or {}).get("image") or _build_image(pack, dest, log)
+    return pack, image, commit
 
 
 def uninstall(pack_id):

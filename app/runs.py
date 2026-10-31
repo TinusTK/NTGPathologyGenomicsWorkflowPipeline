@@ -31,6 +31,11 @@ _lock = threading.Lock()
 WEBLOG_URL = None  # set by the server so Nextflow can post progress events
 
 
+def natural(s):
+    """Alphabetical sort key that ignores case and puts sample2 before sample10."""
+    return [(0, int(p), "") if p.isdigit() else (1, 0, p.lower()) for p in re.split(r"(\d+)", str(s)) if p]
+
+
 READS_RE = re.compile(r"\.(fastq|fq)(\.gz)?$|\.gz$", re.I)
 # Tried in this order by Auto; the one that pairs the most files wins.
 PAIRINGS = [("_R1", "_R2"), (".R1", ".R2"), ("_1", "_2"), (".1", ".2")]
@@ -62,7 +67,7 @@ def find_samples(input_dir, pairing=None):
     the Run page shows, and exactly what goes into the run's samples.csv."""
     pairing = pairing or {}
     d = Path(input_dir).expanduser()
-    names = sorted(f.name for f in d.iterdir() if f.is_file() and READS_RE.search(f.name)) if d.is_dir() else []
+    names = sorted((f.name for f in d.iterdir() if f.is_file() and READS_RE.search(f.name)), key=natural) if d.is_dir() else []
     if pairing.get("mode") == "custom" and pairing.get("r1") and pairing.get("r2"):
         tries = [(pairing["r1"], pairing["r2"])]
     else:
@@ -74,6 +79,7 @@ def find_samples(input_dir, pairing=None):
         if best is None or score > best[0]:
             best = (score, r1, r2, pairs, used)
     _, r1, r2, pairs, used = best
+    pairs.sort(key=lambda p: natural(p["sample"]))
     for p in pairs:
         p["r1"] = str(d / p["r1"])
         p["r2"] = str(d / p["r2"]) if p["r2"] else None
@@ -233,6 +239,17 @@ def refresh(run_id):
         tail = log.read_text(errors="replace").splitlines()[-40:] if log.exists() else []
         run["error"] = "\n".join(tail)
     save(run)
+    if rc == 0:  # Nextflow succeeded, so every step that was set to run did run
+        try:
+            from . import toolversions
+            wf = catalog.load_yaml(rdir / "workflow.yml")
+            for s in run.get("steps_off") or []:
+                if s in wf.get("steps", {}):
+                    wf["steps"][s]["enabled"] = False
+            ran = [sid for sid, ok in compiler.runnable(wf, catalog.load_tools()).items() if ok]
+            toolversions.mark_tested(wf, ran)
+        except Exception:  # never let bookkeeping fail a finished run
+            pass
     if rc == 0 and run["cleanup"]:
         shutil.rmtree(run["work"], ignore_errors=True)
     return run

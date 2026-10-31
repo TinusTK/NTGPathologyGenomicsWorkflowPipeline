@@ -68,8 +68,11 @@ def resolve(wf, tools):
     resolved = []
     for sid in order:
         step = steps[sid]
-        tool = tools.get(step["tool"])
+        tool = catalog.step_tool(tools, step)
         if tool is None:
+            if step["tool"] in tools:
+                raise CompileError(f"step {sid}: {tools[step['tool']]['name']} version {step['tool_version']} "
+                                   "is not installed (add it on the Tools page, or pick another version)")
             raise CompileError(f"step {sid}: tool '{step['tool']}' is not installed")
         settings = {}
         for name, spec in (tool.get("settings") or {}).items():
@@ -85,7 +88,7 @@ def resolve(wf, tools):
                 if src == INPUT:
                     continue
                 up, _, out = src.partition(".")
-                up_tool = tools[steps[up]["tool"]]
+                up_tool = catalog.step_tool(tools, steps[up])
                 if out not in (up_tool.get("outputs") or {}):
                     raise CompileError(f"step {sid}: step {up} has no output '{out}'")
         resolved.append({"id": sid, "step": step, "tool": tool, "settings": settings})
@@ -248,7 +251,7 @@ def _wiring(r):
     for d in tool.get("databases") or []:
         args.append(f"file(params.databases.{d}, checkIfExists: true)")
     for f in tool.get("files") or []:
-        args.append(f"file(\"${{projectDir}}/tools/{tool['id']}/{f}\", checkIfExists: true)")
+        args.append(f"file(\"${{projectDir}}/tools/{tool.get('_bundle', tool['id'])}/{f}\", checkIfExists: true)")
     L.append(f"        {name}({', '.join(args)})")
     for oname in (tool.get("outputs") or {}):
         if per_sample:
@@ -340,7 +343,7 @@ def write_bundle(wf, dest, tools=None, databases=None):
         f"includeConfig '{catalog.ROOT.as_posix()}/conf/base.config'\nincludeConfig 'params.config'\n",
         encoding="utf-8", newline="\n")
     shutil.copytree(catalog.ROOT / "lib", dest / "lib", dirs_exist_ok=True)
-    for tid in {s["tool"] for s in wf["steps"].values()}:
-        shutil.copytree(tools[tid]["_dir"], dest / "tools" / tid, dirs_exist_ok=True)
+    for tool in {t["_bundle"]: t for t in (catalog.step_tool(tools, s) for s in wf["steps"].values())}.values():
+        shutil.copytree(tool["_dir"], dest / "tools" / tool["_bundle"], dirs_exist_ok=True)
     catalog.dump_yaml({k: v for k, v in wf.items() if not k.startswith("_")}, dest / "workflow.yml")
     return dest

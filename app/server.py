@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import catalog, compiler, databases, hardware, runs, toolpacks, updates
+from . import catalog, compiler, databases, hardware, runs, toolpacks, toolversions, updates
 
 STATIC = Path(__file__).parent / "static"
 JOBS = {}
@@ -45,8 +45,12 @@ def _job(title, fn):
     return job
 
 
-def _public_tool(t):
-    return {k: v for k, v in t.items() if k not in ("_dir",)}
+def _public_tool(t, base=None):
+    """Tool for the UI; versions = every installed version of the tool (base: the default one)."""
+    out = {k: v for k, v in t.items() if k not in ("_dir", "_versions")}
+    out["versions"] = toolversions.installed_versions(base or t)
+    out["version_kind"] = toolversions.kind(base or t)
+    return out
 
 
 def workflow_view(wf_id, version=None):
@@ -62,12 +66,12 @@ def workflow_view(wf_id, version=None):
         error = str(e)
     steps = {}
     for sid, step in wf["steps"].items():
-        tool = tools.get(step["tool"])
+        tool = catalog.step_tool(tools, step)
         settings = {}
         if tool:
             for name, spec in (tool.get("settings") or {}).items():
                 settings[name] = {**spec, "value": (step.get("settings") or {}).get(name, spec.get("default"))}
-        steps[sid] = {**step, "tool_info": _public_tool(tool) if tool else None, "resolved_settings": settings}
+        steps[sid] = {**step, "tool_info": _public_tool(tool, tools[step["tool"]]) if tool else None, "resolved_settings": settings}
     return {**{k: v for k, v in wf.items() if k != "steps"}, "steps": steps, "versions": versions, "error": error}
 
 
@@ -153,9 +157,28 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Timer(1.0, _restart).start()
             return
         if g and p == ["tools"]:
-            return self._send(200, [_public_tool(t) for t in catalog.load_tools().values()])
+            return self._send(200, [{**_public_tool(t), "variants": {v: _public_tool(x, t) for v, x in (t.get("_versions") or {}).items()}}
+                                    for t in catalog.load_tools().values()])
+        if g and p == ["tools", "updates"]:
+            toolversions.check_in_background_if_stale()  # once a day, quietly
+            return self._send(200, toolversions.status())
+        if post and p == ["tools", "updates", "check"]:
+            return self._send(200, _job("Check for tool updates", lambda log, prog: (
+                toolversions.check_all(), log(f"{len(toolversions.status()['updates'])} tool(s) have a newer version"))))
+        if post and p == ["tools", "versions", "add"]:
+            b = self._body()
+            return self._send(200, _job(f"Add {b['tool']} version", lambda log, prog: toolversions.add_version(b["tool"], b["choice"], log)))
+        if g and p == ["tools", "versions", "used"]:
+            return self._send(200, toolversions.used_by(q["tool"], q["version"]))
+        if post and p == ["tools", "versions", "remove"]:
+            b = self._body()
+            toolversions.remove_version(b["tool"], b["version"])
+            return self._send(200, {"ok": True})
         if g and p == ["workflows"]:
             return self._send(200, catalog.list_workflows())
+        if delete and len(p) == 2 and p[0] == "workflows":
+            catalog.delete_workflow(p[1])
+            return self._send(200, {"ok": True})
         if g and len(p) == 2 and p[0] == "workflows":
             return self._send(200, workflow_view(p[1], q.get("version")))
         if post and p == ["workflows", "save"]:
@@ -189,8 +212,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"warnings": warns, "samples": samples, "pairing": found})
         if g and p == ["browse"]:
             path = Path(q.get("path") or Path.home()).expanduser()
-            dirs = sorted(d.name for d in path.iterdir() if d.is_dir() and not d.name.startswith(".")) if path.is_dir() else []
-            reads = sorted(f.name for f in path.glob("*.gz")) if path.is_dir() else []
+            dirs = sorted((d.name for d in path.iterdir() if d.is_dir() and not d.name.startswith(".")), key=runs.natural) if path.is_dir() else []
+            reads = sorted((f.name for f in path.glob("*.gz")), key=runs.natural) if path.is_dir() else []
             return self._send(200, {"path": str(path.resolve()), "parent": str(path.resolve().parent), "dirs": dirs, "reads": reads[:200]})
 
         if g and p == ["databases"]:

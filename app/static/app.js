@@ -61,6 +61,22 @@ async function boot() {
   const start = (location.hash || "#workflows").slice(1);
   go(start.split("/")[0] || "workflows", start.split("/")[1]);
   checkUpdates().catch(() => {}); // quietly, once per start; the badge shows if there's a newer version
+  checkToolUpdates().catch(() => {});
+}
+// Tool updates: the server checks once a day by itself; the Tools menu shows a badge.
+async function checkToolUpdates() {
+  S.toolUpdates = await api("tools/updates");
+  const link = $('#nav a[data-page="tools"]');
+  link.querySelector(".badge")?.remove();
+  const n = S.toolUpdates.updates.length;
+  if (n) link.append(" ", h("span", { class: "badge run", title: `${n} tool(s) have a newer version` }, String(n)));
+  return S.toolUpdates;
+}
+// The tool a step uses: the version it picked, else the tool's default version.
+function stepTool(st) {
+  const base = S.tools[st.tool];
+  if (!base || !st.tool_version || String(st.tool_version) === String(base.version)) return base || null;
+  return (base.variants || {})[st.tool_version] || null;
 }
 async function checkUpdates(fetch = true) {
   S.updates = await api("updates" + (fetch ? "" : "?fetch=0"));
@@ -125,7 +141,7 @@ function runnable(wf, off = new Set()) {
   const order = topo(wf);
   for (const sid of order) {
     const st = wf.steps[sid];
-    const tool = S.tools[st.tool];
+    const tool = stepTool(st);
     if (!tool || off.has(sid) || st.enabled === false) { ok[sid] = false; continue; }
     let good = true;
     for (const [name, spec] of Object.entries(tool.inputs || {})) {
@@ -198,7 +214,7 @@ function drawGraph(container, wf, opts = {}) {
   const willRun = runnable(wf, off);
   const els = [{ data: { id: "input", label: "Paired reads\n(input)" }, classes: "input" }];
   for (const [sid, st] of Object.entries(wf.steps)) {
-    const tool = S.tools[st.tool];
+    const tool = stepTool(st);
     const label = `${st.label || sid}\n${tool ? tool.name + " " + (tool.version || "") : "MISSING TOOL: " + st.tool}`;
     const cls = [!tool ? "missing" : "", willRun[sid] ? "" : "off", status[sid] || ""].join(" ");
     els.push({ data: { id: sid, label }, classes: cls });
@@ -254,6 +270,20 @@ async function pageWorkflows(arg) {
 
 function current() { return S.editing ? S.draft : S.wf; }
 
+// Two warnings: deleting removes every saved version and can't be undone.
+async function deleteWorkflow() {
+  const wf = S.wf, n = (wf.versions || []).length;
+  if (!confirm(`Delete the workflow "${wf.name}" and all ${n} saved version${n > 1 ? "s" : ""}?`)) return;
+  if (!confirm(`Are you sure? "${wf.name}" will be gone for good: it can't be brought back.\n\nPast runs of it keep their results (each run folder has its own copy of the workflow).`)) return;
+  try {
+    await api("workflows/" + wf.id, { method: "DELETE" });
+    toast(`Deleted ${wf.name}`);
+    await loadWorkflows();
+    S.wfId = null; S.wfVersion = null; S.wf = null; S.selected = null;
+    await pageWorkflows();
+  } catch (e) { toast("Not deleted: " + e.message, 8000); }
+}
+
 function renderWorkflows() {
   const wf = current();
   const main = $("#main");
@@ -280,6 +310,7 @@ function renderWorkflows() {
       h("button", { onclick: () => { S.editing = true; S.draft = rawWorkflow(S.wf); S.draft._view = S.wf; S.dirty = false; renderWorkflows(); },
         title: S.wf.builtin ? "Built-in workflows can't change; you'll save your edits as a new workflow." : "Edit a copy; Save makes a new version." }, "✎ Edit"),
       h("button", { class: "primary", onclick: () => { S.runPreset = { id: S.wf.id, version: S.wf._version || S.wf.version }; go("run"); } }, "▶ Run this workflow"),
+      S.wf.builtin ? null : h("button", { class: "danger", title: "Delete this workflow and all its saved versions", onclick: deleteWorkflow }, "Delete workflow"),
     ]);
 
   const info = h("div", { class: "card" },
@@ -319,15 +350,24 @@ function renderStepPanel() {
     return;
   }
   const st = wf.steps[sid];
-  const tool = S.tools[st.tool];
+  const tool = stepTool(st);
   const ed = S.editing;
   const kids = [h("div", { class: "row" }, h("h2", { style: "margin:0" }, st.label || sid), h("div", { class: "spacer" }),
     ed ? h("button", { class: "danger", onclick: () => removeStep(sid) }, "Remove step") : null)];
   if (ed) kids.push(h("div", { class: "row small" }, "Label ", h("input", { type: "text", value: st.label || "", oninput: (e) => { st.label = e.target.value; S.dirty = true; } })));
+  const base = S.tools[st.tool];
+  if (!tool && base) {
+    kids.push(warnBox({ level: "error", message: `${base.name} version ${st.tool_version} is not installed any more. ${ed ? "Pick another version:" : "Edit the workflow to pick another version, or add it again on the Tools page."}` }));
+    if (ed) kids.push(versionPicker(st, base));
+    put(panel, ...kids); return;
+  }
   if (!tool) { kids.push(warnBox({ level: "error", message: `Tool '${st.tool}' is not installed. Install its tool pack on the Tools page.` })); put(panel, ...kids); return; }
   kids.push(h("p", { class: "muted" }, tool.description || ""),
     h("div", { class: "kv" },
-      h("div", {}, "Tool"), h("div", {}, `${tool.name} ${tool.version || ""}`),
+      h("div", {}, "Tool"), h("div", {}, tool.name),
+      h("div", {}, "Version"), h("div", {}, ed && base.versions.length > 1 ? versionPicker(st, base)
+        : [`${tool.version || ""}`, versionTags(base.versions.find((v) => v.version === String(tool.version)) || {}),
+          base.versions.length > 1 && !ed ? h("span", { class: "muted small" }, `  (${base.versions.length} installed; Edit to change)`) : null]),
       h("div", {}, "Container"), h("div", { class: "mono small" }, tool.container),
       h("div", {}, "Runs"), h("div", {}, tool.scope === "all_samples" ? "once, on all samples together" : "once per sample"),
       h("div", {}, "Source"), h("div", {}, tool._source === "built-in" ? "built-in" : `tool pack ${tool._source}` + (tool.source ? ` @ ${String(tool.source.commit).slice(0, 10)}` : "")),
@@ -350,12 +390,28 @@ function renderStepPanel() {
   put(panel, ...kids);
 }
 
+// Small labels after a version: built-in / installed, untested.
+function versionTags(v) {
+  return [v.default ? h("span", { class: "badge gray", title: "The version this tool came with" }, "original") : null,
+    v.untested ? h("span", { class: "badge err", title: "Added on the Tools page; no successful run with it yet" }, "untested") : null]
+    .filter(Boolean).flatMap((b) => [" ", b]);
+}
+function versionPicker(st, base) {
+  const cur = String(st.tool_version || base.version);
+  return h("select", { onchange: (e) => {
+    if (e.target.value === String(base.version)) delete st.tool_version; else st.tool_version = e.target.value;
+    S.dirty = true; renderWorkflows();
+  } }, base.versions.map((v) => h("option", { value: v.version, selected: v.version === cur },
+    `${v.version}${v.default ? " (original)" : ""}${v.untested ? " (untested)" : ""}`)),
+    base.versions.some((v) => v.version === cur) ? null : h("option", { value: cur, selected: true, disabled: true }, `${cur} (not installed)`));
+}
+
 function sourceSelect(wf, sid, name, spec, srcs) {
   const options = [];
   if (spec.type === "reads" || spec.type === "any") options.push(["input", "raw reads"]);
   for (const [osid, ost] of Object.entries(wf.steps)) {
     if (osid === sid || dependsOn(wf, osid, sid)) continue;
-    const ot = S.tools[ost.tool]; if (!ot) continue;
+    const ot = stepTool(ost); if (!ot) continue;
     for (const [oname, ospec] of Object.entries(ot.outputs || {})) {
       const compatible = spec.type === "any" || (spec.type === "reads") === (ospec.type === "reads");
       if (compatible) options.push([`${osid}.${oname}`, `${ost.label || osid} → ${oname}`]);
@@ -525,7 +581,7 @@ async function pageRun() {
       const skipped = !ok[sid] && !state.off.has(sid);
       return h("label", {}, h("input", { type: "checkbox", checked: !state.off.has(sid), onchange: (e) => { e.target.checked ? state.off.delete(sid) : state.off.add(sid); renderSteps(); check(); } }),
         h("span", { class: ok[sid] ? "" : "skipped" }, st.label || sid),
-        h("span", { class: "muted small" }, (S.tools[st.tool] || {}).name ? `${S.tools[st.tool].name} ${S.tools[st.tool].version || ""}` : `missing tool ${st.tool}`),
+        h("span", { class: "muted small" }, stepTool(st) ? `${stepTool(st).name} ${stepTool(st).version || ""}${stepTool(st).untested ? " (untested)" : ""}` : `missing tool ${st.tool}${st.tool_version ? " " + st.tool_version : ""}`),
         skipped ? h("span", { class: "badge gray" }, "skipped: needs a step that is off") : null);
     }));
   }
@@ -665,7 +721,8 @@ async function pageRuns(runId) {
       h("div", { class: "card" }, h("div", { class: "row" }, h("h1", {}, r.name), h("span", { class: `badge status-${r.status}` }, r.status)),
         h("div", { class: "kv" }, h("div", {}, "Workflow"), h("div", {}, `${r.workflow.name} v${r.workflow.version}`),
           h("div", {}, "Reads"), h("div", { class: "mono small" }, r.input),
-          h("div", {}, "Samples"), h("div", {}, (r.samples || []).join(", ")),
+          h("div", {}, `Samples (${(r.samples || []).length})`), h("div", {},
+            (r.samples || []).slice().sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).map((s) => h("div", { class: "mono small" }, s))),
           h("div", {}, "Steps off"), h("div", {}, (r.steps_off || []).join(", ") || "none"),
           h("div", {}, "Cleanup"), h("div", {}, r.cleanup ? "on (work folder deleted after success)" : "off (everything kept)"),
           h("div", {}, "Started / finished"), h("div", {}, `${r.started} → ${r.finished || "…"}`),
@@ -734,14 +791,26 @@ async function viewFile(runId, f) {
 async function pageTools() {
   await loadTools();
   const packs = await api("packs");
+  const upd = await checkToolUpdates().catch(() => ({ tools: {}, updates: [], checked: null }));
   if (S.page !== "tools") return;
+  const updBox = h("div", {});
   const main = $("#main");
   const byCat = {};
   for (const t of Object.values(S.tools)) (byCat[t.category || "Other"] = byCat[t.category || "Other"] || []).push(t);
   const urlInput = h("input", { type: "text", class: "wide", placeholder: "https://github.com/owner/repo  (repo must contain ntg/pack.yml)" });
   const jobBox = h("div", {});
-  put(main, 
+  put(main,
     h("h1", {}, "Tools"),
+    h("div", { class: "card" }, h("h2", { style: "margin-top:0" }, "Tool versions"),
+      h("div", { class: "row" },
+        upd.updates.length ? h("span", { class: "badge run" }, `${upd.updates.length} tool${upd.updates.length > 1 ? "s have" : " has"} a newer version`)
+          : h("span", { class: "badge ok" }, upd.checked ? "All tools are up to date" : "Not checked yet"),
+        h("span", { class: "small muted" }, upd.checked ? `Last checked ${upd.checked.replace("T", " ")}` : ""),
+        h("div", { class: "spacer" }),
+        h("button", { onclick: () => runJob("tools/updates/check", {}, updBox, pageTools) }, "Check for updates")),
+      h("div", { class: "small muted", style: "margin-top:6px" },
+        "Checks quay.io (built-in tools) and GitHub (tool packs) once a day by itself. Adding a version never removes the one you have: both stay installed, and each workflow step picks its version (Workflows → Edit → click a step → Version). A new version is marked untested until a run with it succeeds."),
+      updBox),
     h("div", { class: "card" }, h("h2", { style: "margin-top:0" }, "Tool packs from git"),
       h("div", { class: "small muted" }, "A tool pack adds tools from another git repository, pinned to an exact commit, with its own container. Installed tools can be added to any workflow (Workflows → Edit → Add step)."),
       h("table", { class: "data", style: "margin-top:8px" }, h("tbody", {}, packs.map((p) => h("tr", {},
@@ -758,9 +827,66 @@ async function pageTools() {
       jobBox),
     ...Object.entries(byCat).sort().map(([cat, ts]) => h("div", { class: "card" }, h("h2", { style: "margin-top:0" }, cat),
       h("table", { class: "data" }, h("tbody", {}, ts.map((t) => h("tr", {},
-        h("td", {}, h("b", {}, t.name), " ", h("span", { class: "muted" }, t.version), h("div", { class: "muted small" }, t.description)),
-        h("td", { class: "mono small" }, t.container),
-        h("td", { class: "small" }, t._source === "built-in" ? "built-in" : "pack: " + t._source))))))));
+        h("td", { style: "width:40%" }, h("b", {}, t.name), h("div", { class: "muted small" }, t.description),
+          h("div", { class: "muted small" }, t._source === "built-in" ? "built-in" : "from tool pack " + t._source)),
+        h("td", {}, toolVersionsCell(t, (upd.tools || {})[t.id] || {})))))))));
+}
+// Installed versions as chips (× removes an added one), plus "newer available" and Add version….
+function toolVersionsCell(t, u) {
+  if (!t.version_kind) return h("div", { class: "small muted" }, `${t.version || ""} · part of the pipeline (updates with it)`);
+  const chips = t.versions.map((v) => h("span", { class: "vchip" + (v.untested ? " untested" : ""), title: v.container || "" },
+    h("b", {}, v.version), versionTags(v),
+    v.default ? null : h("a", { class: "vchip-x", title: "Remove this version", onclick: () => removeVersion(t, v) }, "×")));
+  return h("div", {},
+    h("div", { class: "vchips" }, chips),
+    h("div", { class: "row small", style: "margin-top:4px" },
+      (u.newer || []).length ? h("span", { class: "badge run" }, `${u.newer[0]}${u.newer.length > 1 ? ` (+${u.newer.length - 1} more)` : ""} available`) : null,
+      u.error ? h("span", { class: "muted", title: u.error }, "couldn't check") : null,
+      h("button", { onclick: () => addVersionDialog(t, u) }, "Add version…")));
+}
+async function removeVersion(t, v) {
+  const used = await api(`tools/versions/used?tool=${encodeURIComponent(t.id)}&version=${encodeURIComponent(v.version)}`);
+  const msg = `Remove ${t.name} ${v.version}?` + (used.length ? `\n\nThese saved workflows use it and will show it as missing until you pick another version:\n• ${used.join("\n• ")}` : "\n\nNo saved workflow uses it.") +
+    "\n\nPast runs keep their results. You can add the version again later.";
+  if (!confirm(msg)) return;
+  try { await api("tools/versions/remove", { body: { tool: t.id, version: v.version } }); toast(`Removed ${t.name} ${v.version}`); pageTools(); }
+  catch (e) { toast("Not removed: " + e.message, 8000); }
+}
+// Pick any published version: newest first; installed ones can't be added twice.
+function addVersionDialog(t, u) {
+  let close;
+  const jobBox = h("div", {});
+  const have = new Set(t.versions.map((v) => t.version_kind === "git" ? v.commit : v.version));
+  const list = u.available || [];
+  const newestHave = t.versions.reduce((a, v) => (verCmp(v.version, a) > 0 ? v.version : a), t.version);
+  const rows = list.map((v) => {
+    const installed = have.has(t.version_kind === "git" ? v.choice : v.version);
+    const newer = t.version_kind === "git" ? v.ref === "main" && !installed : verCmp(v.version, newestHave) > 0;
+    return h("tr", { class: installed ? "muted" : "" },
+      h("td", { class: "mono small" }, v.label),
+      h("td", {}, installed ? h("span", { class: "badge gray" }, "installed") : newer ? h("span", { class: "badge run" }, t.version_kind === "git" ? "latest" : "newer") : null),
+      h("td", {}, installed ? null : h("button", { class: newer ? "primary" : "", onclick: () => {
+        put(jobBox); runJob("tools/versions/add", { tool: t.id, choice: v.choice }, jobBox, () => { close(); pageTools(); });
+      } }, "Add")));
+  });
+  close = modal(h("div", {},
+    h("h2", {}, `Add a version of ${t.name}`),
+    h("div", { class: "small muted" }, `Installed: ${t.versions.map((v) => v.version).join(", ")}. The installed versions stay; the new one is checked (downloaded and started once) and marked untested until a run with it succeeds.` +
+      (t.version_kind === "git" ? " Tool packs: pick a branch or tag of the pack's repository; its container is built here (a few minutes)." : " Versions come from BioContainers on quay.io; a newer version can change options or results, so check the first run's output.")),
+    list.length ? h("div", { class: "table-wrap", style: "max-height:45vh;margin-top:8px" }, h("table", { class: "data" }, h("tbody", {}, rows)))
+      : h("div", { class: "warn info" }, u.error ? `Couldn't look up versions: ${u.error}` : "No version list yet: press Check for updates on the Tools page first."),
+    jobBox));
+}
+// Compare version strings numerically: 1.10.0 > 1.9.2.
+function verCmp(a, b) {
+  const pa = String(a).split(/[.\-_+]/), pb = String(b).split(/[.\-_+]/);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? "", y = pb[i] ?? "";
+    const nx = /^\d+$/.test(x) ? +x : -1, ny = /^\d+$/.test(y) ? +y : -1;
+    if (nx !== ny) return nx - ny;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
 }
 async function runJob(path, body, box, done) {
   const job = await api(path, { body });

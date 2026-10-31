@@ -9,6 +9,7 @@ Layout (all paths relative to the repo root unless noted):
 """
 import os
 import re
+import shutil
 from pathlib import Path
 
 import yaml
@@ -40,13 +41,32 @@ def tool_dirs():
 
 
 def load_tools():
+    """{id: tool}: each tool as shipped/installed, with the extra versions added on the
+    Tools page in tool["_versions"] = {version: tool} (see toolversions.py)."""
     tools = {}
     for f in tool_dirs():
         t = load_yaml(f)
         t["_dir"] = str(f.parent)
         t["_source"] = "built-in" if f.is_relative_to(ROOT) else f.parent.parent.name
+        t["_bundle"] = t["id"]  # folder name inside a run's tools/
         tools.setdefault(t["id"], t)  # built-in wins over an installed tool of the same id
+    for f in sorted((HOME / "tool_versions").glob("*/*/tool.yml")):
+        t = load_yaml(f)
+        base = tools.get(t.get("id"))
+        if not base:
+            continue
+        t.update(_dir=str(f.parent), _source=base["_source"], _bundle=f"{t['id']}@{f.parent.name}")
+        base.setdefault("_versions", {})[str(t["version"])] = t
     return tools
+
+
+def step_tool(tools, step):
+    """The tool a workflow step uses: its tool_version if it picked one, else the default."""
+    t = tools.get(step["tool"])
+    v = step.get("tool_version")
+    if t is None or v in (None, "") or str(v) == str(t.get("version")):
+        return t
+    return (t.get("_versions") or {}).get(str(v))
 
 
 # ---------------------------------------------------------------- databases
@@ -118,6 +138,16 @@ def load_workflow(wf_id, version=None):
     wf = load_yaml(f)
     wf.update(_file=str(f), _version=int(Path(f).stem[1:]), locked=True, builtin=False)
     return wf
+
+
+def delete_workflow(wf_id):
+    """Delete a user workflow and every saved version of it. Built-ins can't be deleted.
+    Past runs keep their own copy of the workflow (workflow.yml in the run folder)."""
+    if any(b["id"] == wf_id for b in builtin_workflows()):
+        raise ValueError("built-in workflows can't be deleted")
+    if not ID_RE.match(wf_id) or not user_workflow_versions(wf_id):
+        raise KeyError(f"unknown workflow {wf_id}")
+    shutil.rmtree(HOME / "workflows" / wf_id)
 
 
 def save_workflow(wf, new_id=None):

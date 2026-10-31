@@ -81,7 +81,15 @@ list of sources means "the first one that runs", e.g.
 `extends: <id>` starts from another workflow's steps.
 
 Built-in workflows are read-only. Workflows saved from the UI go to
-`~/.ntg/workflows/<id>/v<N>.yml`, one file per version.
+`~/.ntg/workflows/<id>/v<N>.yml`, one file per version; user workflows can be
+deleted (all versions), built-ins can't.
+
+`tool_version: <version>` on a step picks another installed version of its
+tool; without it the tool's own version is used. Extra versions are added on
+the Tools page (BioContainers tags from quay.io for built-in tools, a commit of
+the pack's repository for tool packs) and live in
+`~/.ntg/tool_versions/<tool>/<version>/tool.yml`, next to the original. A new
+version is `untested: true` until a run that used it succeeds.
 
 ## Tool packs
 
