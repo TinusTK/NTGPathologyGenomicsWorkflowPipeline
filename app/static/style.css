@@ -36,6 +36,14 @@ pre { background: var(--panel-2); border: 1px solid var(--border); border-radius
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; }
 .brand { font-weight: 650; }
 .hw-chip { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hw-chip .lvl { font-weight: 600; }
+.hw-chip .lvl-ok { color: var(--ok); }
+.hw-chip .lvl-warn { color: var(--warn); }
+.hw-chip .lvl-err { color: var(--err); }
+.changes { max-height: 360px; overflow: auto; margin: 6px 0; }
+.change { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.change ul { margin: 6px 0 0; padding-left: 20px; }
+.change li { margin: 3px 0; }
 .layout { display: flex; min-height: calc(100vh - 45px); }
 .sidebar { width: 190px; flex: none; background: var(--panel); border-right: 1px solid var(--border); padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
 .sidebar a { display: block; padding: 8px 10px; border-radius: 6px; color: var(--text); text-decoration: none; }

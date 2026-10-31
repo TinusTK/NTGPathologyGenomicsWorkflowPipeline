@@ -28,14 +28,24 @@ def _meminfo():
     return out
 
 
-def _free_gb(path):
+def _disk(path):
     p = Path(path)
     while not p.exists() and p != p.parent:
         p = p.parent
     try:
-        return round(shutil.disk_usage(p).free / 1e9, 1)
+        return shutil.disk_usage(p)
     except OSError:
         return None
+
+
+def _free_gb(path):
+    d = _disk(path)
+    return round(d.free / 1e9, 1) if d else None
+
+
+def _total_gb(path):
+    d = _disk(path)
+    return round(d.total / 1e9, 1) if d else None
 
 
 def check():
@@ -156,6 +166,7 @@ def usage():
         "memory_gb": round(total, 1),
         "memory_used_gb": round(total - avail, 1),
         "disk_free_gb": _free_gb(catalog.HOME / "work"),
+        "disk_total_gb": _total_gb(catalog.HOME / "work"),
     }
 
 

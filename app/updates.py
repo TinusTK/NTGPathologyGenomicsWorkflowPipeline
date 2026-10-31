@@ -30,6 +30,29 @@ def _commit(ref):
     return {"commit": sha, "date": date, "subject": subject}
 
 
+KINDS = {"fix": "Bug fix", "new": "New", "improved": "Improved"}
+
+
+def _change(rec):
+    """One commit as {commit, date, subject, notes: [{kind, text}]}. Body lines starting
+    with "- Fix:", "- New:" or "- Improved:" get that label; other bullets have none."""
+    sha, date, subject, body = (rec.strip("\n").split("\t", 3) + [""])[:4]
+    notes = []
+    for line in body.splitlines():
+        line = line.rstrip()
+        if line.startswith(("- ", "* ")):
+            text, kind = line[2:].strip(), None
+            head, _, rest = text.partition(":")
+            if head.strip().lower() in KINDS and rest.strip():
+                kind, text = KINDS[head.strip().lower()], rest.strip()
+            notes.append({"kind": kind, "text": text})
+        elif line.strip() and notes:  # wrapped bullet
+            notes[-1]["text"] += " " + line.strip()
+    if not notes and body.strip():  # a plain paragraph instead of bullets
+        notes = [{"kind": None, "text": " ".join(body.split())}]
+    return {"commit": sha, "date": date, "subject": subject, "notes": notes}
+
+
 def _running():
     return [r["name"] or r["id"] for r in runs.list_runs() if r["status"] in ("running", "starting")]
 
@@ -52,8 +75,9 @@ def status(fetch=True):
             out["error"] = f"Couldn't reach GitHub to check for updates: {msg.splitlines()[-1] if msg else 'unknown error'}"
             return out
         out["checked"] = True
-    rc, log = _git("log", "--format=%h%x09%ad%x09%s", "--date=short", f"HEAD..{upstream}")
-    out["new"] = [dict(zip(("commit", "date", "subject"), line.split("\t", 2))) for line in log.splitlines() if line] if not rc else []
+    # Full messages, so people can read what each change is before updating.
+    rc, log = _git("log", "--format=%h%x09%ad%x09%s%x09%b%x1e", "--date=short", f"HEAD..{upstream}")
+    out["new"] = [_change(rec) for rec in log.split("\x1e") if rec.strip()] if not rc else []
     rc, ahead = _git("rev-list", "--count", f"{upstream}..HEAD")
     out["ahead"] = int(ahead) if not rc and ahead.isdigit() else 0
     rc, dirty = _git("status", "--porcelain", "--untracked-files=no")

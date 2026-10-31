@@ -49,6 +49,7 @@ const S = {
   editing: false, draft: null, selected: null, dirty: false,
   runTimer: null,
   usageTimer: null,
+  usage: null,
 };
 
 async function boot() {
@@ -72,28 +73,32 @@ async function loadTools() { S.tools = Object.fromEntries((await api("tools")).m
 async function loadWorkflows() { S.workflows = await api("workflows"); }
 async function loadHardware() {
   S.hw = await api("hardware");
-  showUsage(null);
+  showUsage(S.usage);
   if (!S.usageTimer) { pollUsage(); S.usageTimer = setInterval(pollUsage, 2000); }
 }
 // Top bar: live CPU use, clock speed and RAM, every 2 s while the tab is visible.
 async function pollUsage() {
   if (document.hidden) return;
-  try { showUsage(await api("usage")); } catch { /* UI restarting: keep the last values */ }
+  try { S.usage = await api("usage"); showUsage(S.usage); } catch { /* UI restarting: keep the last values */ }
 }
+// Green while there's room, amber from 70% used, red from 90%.
+const level = (pct) => pct == null ? "" : pct >= 90 ? "lvl lvl-err" : pct >= 70 ? "lvl lvl-warn" : "lvl lvl-ok";
 function showUsage(u) {
   const hw = S.hw;
   const parts = [`${hw.cpus} CPUs`];
   if (u) {
-    if (u.cpu_percent != null) parts.push(`CPU ${Math.round(u.cpu_percent)}%`);
+    if (u.cpu_percent != null) parts.push(h("span", { class: level(u.cpu_percent), title: "CPU in use" }, `CPU ${Math.round(u.cpu_percent)}%`));
     if (u.cpu_ghz != null) parts.push(`${u.cpu_ghz.toFixed(2)} GHz${u.cpu_ghz_kind === "base" ? " (base)" : ""}`);
-    parts.push(`RAM ${u.memory_used_gb.toFixed(1)} / ${Math.round(u.memory_gb)} GB`);
+    parts.push(h("span", { class: level(u.memory_gb ? 100 * u.memory_used_gb / u.memory_gb : null), title: "RAM in use" },
+      `RAM ${u.memory_used_gb.toFixed(1)} / ${Math.round(u.memory_gb)} GB`));
+    const usedPct = u.disk_total_gb && u.disk_free_gb != null ? 100 * (1 - u.disk_free_gb / u.disk_total_gb) : null;
+    parts.push(h("span", { class: level(usedPct), title: "Free space on the disk that holds runs and work files" }, `${u.disk_free_gb ?? "?"} GB free storage`));
   } else {
-    parts.push(`${Math.round(hw.memory_gb)} GB RAM`);
+    parts.push(`${Math.round(hw.memory_gb)} GB RAM`, `${hw.disk_free_gb.work ?? "?"} GB free storage`);
   }
-  parts.push(`${(u ? u.disk_free_gb : hw.disk_free_gb.work) ?? "?"} GB free`, `Docker ${hw.docker ? hw.docker : "NOT RUNNING"}`);
+  parts.push(h("span", { class: hw.docker ? "" : "lvl lvl-err" }, `Docker ${hw.docker ? hw.docker : "NOT RUNNING"}`));
   const chip = $("#hw-chip");
-  chip.textContent = parts.join(" · ");
-  chip.style.color = hw.docker ? "" : "var(--err)";
+  put(chip, parts.flatMap((p, i) => i ? [" · ", p] : [p]));
   chip.title = u && u.cpu_ghz_kind === "base" ? "This computer (live clock speed not readable here: showing the base clock)" : "This computer (updates every 2 seconds)";
 }
 
@@ -657,9 +662,6 @@ async function pageRuns(runId) {
         isLive(r.status) ? h("span", { class: "small muted" }, `● Live, updated ${clock()}`) : null,
         isLive(r.status) ? h("button", { class: "danger", onclick: async () => { if (confirm("Stop this run?")) { await api(`runs/${runId}/stop`, { method: "POST" }); render(); } } }, "Stop run")
           : h("button", { class: "danger", onclick: async () => { if (confirm("Delete this run and all its results? This cannot be undone.")) { await api("runs/" + runId, { method: "DELETE" }); go("runs"); } } }, "Delete run")),
-      h("div", { class: "row" }, h("a", { onclick: () => go("runs") }, "← All runs"), h("div", { class: "spacer" }),
-        ["running", "starting"].includes(r.status) ? h("button", { class: "danger", onclick: async () => { if (confirm("Stop this run?")) { await api(`runs/${runId}/stop`, { method: "POST" }); render(); } } }, "Stop run")
-          : h("button", { class: "danger", onclick: async () => { if (confirm("Delete this run and all its results? This cannot be undone.")) { await api("runs/" + runId, { method: "DELETE" }); go("runs"); } } }, "Delete run")),
       h("div", { class: "card" }, h("div", { class: "row" }, h("h1", {}, r.name), h("span", { class: `badge status-${r.status}` }, r.status)),
         h("div", { class: "kv" }, h("div", {}, "Workflow"), h("div", {}, `${r.workflow.name} v${r.workflow.version}`),
           h("div", {}, "Reads"), h("div", { class: "mono small" }, r.input),
@@ -823,9 +825,13 @@ function updatesCard() {
       u && u.error ? warnBox({ level: "warning", message: u.error }) : null,
       fresh && !u.new.length ? h("div", { class: "warn info" }, "You have the latest version.") : null,
       u && (u.new || []).length ? [
-        h("h3", {}, `${u.new.length} newer change${u.new.length > 1 ? "s" : ""} on GitHub`),
-        h("div", { class: "table-wrap", style: "max-height:240px" }, h("table", { class: "data" }, h("tbody", {},
-          u.new.map((c) => h("tr", {}, h("td", { class: "mono small" }, c.commit), h("td", { class: "small" }, c.date), h("td", {}, c.subject)))))),
+        h("h3", {}, `What's new: ${u.new.length} change${u.new.length > 1 ? "s" : ""} on GitHub`),
+        h("div", { class: "small muted" }, "Read what each update fixes or adds before you update."),
+        h("div", { class: "changes" }, u.new.map((c) => h("div", { class: "change" },
+          h("div", {}, h("b", {}, c.subject), h("span", { class: "small muted" }, `  ${c.date} · ${c.commit}`)),
+          (c.notes || []).length ? h("ul", {}, c.notes.map((n) => h("li", {},
+            n.kind ? h("span", { class: "badge " + ({ "Bug fix": "err", New: "ok", Improved: "run" }[n.kind] || "gray") }, n.kind) : null,
+            n.kind ? " " : null, n.text))) : null))),
         u.blocked ? warnBox({ level: "warning", message: "Can't update now. " + u.blocked }) : null] : null,
       h("div", { class: "row", style: "margin-top:8px" },
         h("button", { disabled: busy, onclick: async () => { show(u, true); show(await checkUpdates().catch((e) => ({ ...u, error: e.message })), false); } },
